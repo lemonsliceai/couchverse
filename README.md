@@ -4,8 +4,6 @@
 
 A full-stack app where users watch YouTube alongside **Fox**, an AI comedian avatar that delivers real-time comedic commentary. Think MST3K meets AI: Fox listens to the podcast audio, understands what's being discussed, and drops witty one-liners and observations via an animated talking fox avatar.
 
-**[Live Demo: watchwithfox.com](https://watchwithfox.com)**
-
 <!-- Screenshot: place a 1200×630 image at docs/screenshot.png (see note below) -->
 <p align="center">
   <img src="docs/screenshot.png" alt="Watch with Fox — Fox reacting to a YouTube video" width="720" />
@@ -153,7 +151,12 @@ AVATAR_URL=http://PUBLIC_URL/static/fox_2x3.jpg
 AGENT_NAME=podcast-commentary-agent-local
 ```
 
-The web app's `NEXT_PUBLIC_API_URL` is baked into the `dev` / `prod` npm scripts (see `web/package.json`) — no `.env.local` needed for normal use.
+The web app reads `NEXT_PUBLIC_API_URL` from `web/.env` (defaults to `http://localhost:8080`). To point at your own hosted API server, update this value:
+
+```bash
+cp web/.env.example web/.env
+# Edit web/.env → set NEXT_PUBLIC_API_URL to your server
+```
 
 ### Running the App
 
@@ -178,34 +181,12 @@ uv run python src/podcast_commentary/agent/main.py dev
 **Terminal 3 — Web App** (port 3000):
 ```bash
 cd web
-npm run dev    # points at local API (http://localhost:8080)
+npm run dev    # reads API URL from web/.env (default: http://localhost:8080)
 ```
 
 Then open <http://localhost:3000> and paste a YouTube URL.
 
-> **Tip:** Use `npm run prod` instead of `npm run dev` to point the frontend at the deployed Fly.io API — useful for UI-only work.
-
-## Deployment
-
-**API Server** (Fly.io):
-```bash
-cd server
-fly deploy --dockerfile Dockerfile.api
-```
-
-**Agent** (LiveKit Cloud):
-```bash
-cd server
-lk agent deploy
-```
-
-**Logs:**
-```bash
-fly logs                  # API: live tail from Fly.io
-lk agent logs             # Agent: live tail from LiveKit Cloud
-```
-
-On Vercel, set `NEXT_PUBLIC_API_URL` in the project's Environment Variables dashboard — the `build` script reads it at build time.
+> **Tip:** To point the frontend at a remote API server, update `NEXT_PUBLIC_API_URL` in `web/.env`.
 
 ## Project Structure
 

@@ -37,7 +37,7 @@ cd web && npm run dev
 
 ## Environment
 
-All env vars go in `server/.env` (see `server/.env.example`). The web app only needs `NEXT_PUBLIC_API_URL`, which is baked into the npm dev/prod scripts.
+All env vars go in `server/.env` (see `server/.env.example`). The web app reads `NEXT_PUBLIC_API_URL` from `web/.env` (defaults to `http://localhost:8080`).
 
 ## Code style
 

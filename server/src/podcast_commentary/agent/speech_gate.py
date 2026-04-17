@@ -82,6 +82,10 @@ class SpeechGate:
         on Fox mid-sentence. Set True for user-reply turns — the user
         should be able to cut him off with a fresh hold-to-talk.
         """
+        logger.info(
+            "=== FOX SPEAK PROMPT ===\n%s\n=== END SPEAK PROMPT ===",
+            prompt,
+        )
         handle = self._session.generate_reply(
             user_input=prompt,
             chat_ctx=llm.ChatContext.empty(),

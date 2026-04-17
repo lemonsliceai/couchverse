@@ -10,7 +10,7 @@
   },
   "private": true,
   "scripts": {
-    "dev": "NEXT_PUBLIC_API_URL=http://localhost:8080 next dev",
+    "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

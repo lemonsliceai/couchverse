@@ -6,7 +6,7 @@
   * `UserTurnTracker` — hold-to-talk state machine
   * `PodcastPipeline` — podcast STT stream + ffmpeg player + consumer
   * `CommentaryTimer` — MIN_GAP / burst rules between turns
-  * `FullTranscript` — rolling podcast transcript + running summary
+  * `FullTranscript` — rolling podcast transcript
 
 …and the behaviour that *coordinates* them: when a podcast line lands, check
 the gates and deliver a reaction; when the podcast goes quiet, step in with a
@@ -24,27 +24,22 @@ import logging
 from typing import Any
 
 from livekit.agents import Agent, llm
-from livekit.agents.vad import VAD
-from livekit.plugins import groq
 from livekit.rtc._proto.track_pb2 import TrackSource
 
 from podcast_commentary.agent.commentary import (
     CommentaryTimer,
     FullTranscript,
+    SENTENCE_THRESHOLD,
 )
 from podcast_commentary.agent.podcast_pipeline import PodcastPipeline
 from podcast_commentary.agent.prompts import (
     build_commentary_request,
-    build_summary_request,
     build_user_reply_request,
     pick_angle,
 )
 from podcast_commentary.agent.speech_gate import SpeechGate
 from podcast_commentary.agent.user_turn import UserTurnTracker
-from podcast_commentary.core.db import (
-    log_conversation_message,
-    update_session_summary,
-)
+from podcast_commentary.core.db import log_conversation_message
 
 logger = logging.getLogger("podcast-commentary.agent")
 
@@ -72,14 +67,15 @@ def _log_task_exception(task: asyncio.Task) -> None:
         )
 
 
-# How often the summary loop polls. Low enough that the summary is at worst
-# one podcast turn behind; high enough that it's not a busy loop.
-SUMMARY_POLL_SECONDS = 2
+# Minimum breathing room before the sentence-count trigger can fire after
+# Fox finishes speaking. The real floor is CommentaryTimer.can_comment()
+# (MIN_GAP = 5s from end-of-speech), so this is a secondary safety net.
+POST_SPEECH_DELAY = 2.0
 
-# After Fox finishes speaking, wait this many seconds before delivering the
-# next commentary on the accumulated transcript. Applies after the intro and
-# after every subsequent commentary or user-reply turn.
-POST_SPEECH_DELAY = 7.0
+# If no new transcript arrives for this many seconds after entering
+# LISTENING, deliver commentary on whatever has accumulated. Catches
+# podcast pauses, topic transitions, and end-of-video.
+SILENCE_FALLBACK_DELAY = 12.0
 
 # Safety-net timeouts for speech playout.  DataStreamAudioOutput (the
 # LemonSlice avatar path) waits for a `lk.playback_finished` RPC from the
@@ -87,7 +83,7 @@ POST_SPEECH_DELAY = 7.0
 # mismatch — the SpeechHandle hangs forever and the phase state-machine
 # deadlocks.  These timeouts force the transition so the agent recovers.
 INTRO_PLAYOUT_TIMEOUT = 15.0
-COMMENTARY_PLAYOUT_TIMEOUT = 20.0
+COMMENTARY_PLAYOUT_TIMEOUT = 12.0
 
 
 class FoxPhase(enum.Enum):
@@ -145,16 +141,13 @@ class ComedianAgent(Agent):
         instructions: str,
         *,
         audio_url: str | None = None,
-        vad: VAD | None = None,
         session_id: str | None = None,
         proxy: str | None = None,
     ) -> None:
         super().__init__(instructions=instructions)
         # Conversation state — shared across producers.
         self._timer = CommentaryTimer()
-        # Summary interval=1 → re-summarise as soon as any previous line is
-        # unsummarised, so the summary is never more than one turn behind.
-        self._full_transcript = FullTranscript(summary_interval=1)
+        self._full_transcript = FullTranscript()
         self._commentary_history: list[str] = []
         # Rotated comedic "angles" so successive comments don't collapse into
         # one house voice. `pick_angle` excludes the last few used names.
@@ -171,7 +164,6 @@ class ComedianAgent(Agent):
 
         # Podcast audio plumbing — only set if we have a URL to decode.
         self._audio_url = audio_url
-        self._vad = vad
         self._proxy = proxy
 
         # Collaborators — initialised in `on_enter` once `self.session` is
@@ -187,11 +179,6 @@ class ComedianAgent(Agent):
 
         # Background tasks owned by this agent.
         self._commentary_delay_task: asyncio.Task | None = None
-        self._summary_task: asyncio.Task | None = None
-
-        # Dedicated LLM for summary generation — kept separate from the
-        # session's speech LLM so a slow summary call can't stall speech.
-        self._summary_llm = groq.LLM(model="meta-llama/llama-4-scout-17b-16e-instruct")
 
     # ==================================================================
     # Public state (read by collaborators and tests)
@@ -220,6 +207,7 @@ class ComedianAgent(Agent):
         logger.info("Phase: %s → %s", old.value, new.value)
         if new == FoxPhase.LISTENING:
             self._schedule_next_commentary()
+            self._check_sentence_threshold()
 
     # ==================================================================
     # Lifecycle
@@ -243,8 +231,6 @@ class ComedianAgent(Agent):
 
         # SYNCHRONOUS: closes the gate before any await below.
         self._speak_intro()
-
-        self._start_background_tasks()
 
         # First awaits — the gate is already closed, so racing transcripts
         # are safely dropped by `_handle_podcast_transcript`.
@@ -275,7 +261,6 @@ class ComedianAgent(Agent):
         if self._audio_url:
             self._podcast = PodcastPipeline(
                 audio_url=self._audio_url,
-                vad=self._vad,
                 on_transcript=self._handle_podcast_transcript,
                 proxy=self._proxy,
             )
@@ -374,14 +359,6 @@ class ComedianAgent(Agent):
 
         if self._phase == FoxPhase.INTRO:
             self._set_phase(FoxPhase.LISTENING)
-
-    def _start_background_tasks(self) -> None:
-        """Launch the continuous summariser.
-
-        The commentary delay timer is started by ``_set_phase(LISTENING)``
-        when the intro finishes — no need to launch it here.
-        """
-        self._summary_task = asyncio.create_task(self._summarize_loop())
 
     async def _publish_agent_ready_if_podcast(self) -> None:
         """Tell the client the agent is armed so it can (re-)publish play.
@@ -499,20 +476,37 @@ class ComedianAgent(Agent):
         """Called by PodcastPipeline for every podcast FINAL_TRANSCRIPT.
 
         Every finalised line is persisted and added to the running
-        transcript. Commentary is driven by the post-speech timer, not
-        by individual transcript events.
+        transcript. If accumulated sentences meet the threshold and
+        Fox is LISTENING with gates open, trigger commentary immediately.
         """
         self._persist("podcast", text)
-        self._full_transcript.add(text)
+        sentence_count = self._full_transcript.add(text)
+
+        if (
+            sentence_count >= SENTENCE_THRESHOLD
+            and self._phase == FoxPhase.LISTENING
+            and self._timer.can_comment()
+        ):
+            if self._commentary_delay_task is not None:
+                self._commentary_delay_task.cancel()
+            _fire_and_forget(
+                self._deliver_commentary(
+                    trigger_reason="react to the latest transcript",
+                    energy_level="amused",
+                ),
+                name="sentence_trigger_commentary",
+            )
 
     # ------------------------------------------------------------------
     # Timer-based commentary cadence
     # ------------------------------------------------------------------
     def _schedule_next_commentary(self) -> None:
-        """Schedule a commentary turn after POST_SPEECH_DELAY seconds.
+        """Schedule a silence-fallback commentary after SILENCE_FALLBACK_DELAY.
 
         Called every time phase transitions to LISTENING. Cancels any
         existing timer so we don't stack up multiple pending commentaries.
+        The primary trigger is sentence-count in _handle_podcast_transcript;
+        this is the fallback for when the podcast goes quiet.
         """
         if self._commentary_delay_task is not None:
             self._commentary_delay_task.cancel()
@@ -521,8 +515,8 @@ class ComedianAgent(Agent):
         )
 
     async def _commentary_after_delay(self) -> None:
-        """Wait POST_SPEECH_DELAY, then deliver commentary if still LISTENING."""
-        await asyncio.sleep(POST_SPEECH_DELAY)
+        """Silence fallback: wait SILENCE_FALLBACK_DELAY, then deliver."""
+        await asyncio.sleep(SILENCE_FALLBACK_DELAY)
 
         if self._phase != FoxPhase.LISTENING:
             return
@@ -533,9 +527,30 @@ class ComedianAgent(Agent):
             return
 
         await self._deliver_commentary(
-            trigger_reason="react to the latest transcript",
+            trigger_reason="the video has gone quiet — react to what was said",
             energy_level="amused",
         )
+
+    def _check_sentence_threshold(self) -> None:
+        """If enough sentences accumulated while Fox was speaking, trigger.
+
+        Called on every LISTENING entry. Uses _fire_and_forget so the
+        trigger runs asynchronously — _set_phase is synchronous and must
+        not await.
+        """
+        if (
+            self._full_transcript.sentences_since_reset >= SENTENCE_THRESHOLD
+            and self._timer.can_comment()
+        ):
+            if self._commentary_delay_task is not None:
+                self._commentary_delay_task.cancel()
+            _fire_and_forget(
+                self._deliver_commentary(
+                    trigger_reason="react to the latest transcript",
+                    energy_level="amused",
+                ),
+                name="sentence_threshold_commentary",
+            )
 
     async def _deliver_commentary(
         self, *, trigger_reason: str, energy_level: str
@@ -561,6 +576,8 @@ class ComedianAgent(Agent):
         prompt, angle_name = self._build_commentary_prompt(
             trigger_reason=trigger_reason, energy_level=energy_level
         )
+        # Reset AFTER building the prompt so recent_transcript() still has content.
+        self._full_transcript.reset_sentence_count()
         logger.info(
             "Generating commentary (trigger=%s, angle=%s, stats=%s)",
             trigger_reason, angle_name, self._timer.stats(),
@@ -578,6 +595,13 @@ class ComedianAgent(Agent):
                 "Commentary playout timed out after %.0fs — returning to LISTENING",
                 COMMENTARY_PLAYOUT_TIMEOUT,
             )
+            # Prevent back-to-back stacking: reset accumulated sentences so
+            # _check_sentence_threshold() (called on LISTENING entry) doesn't
+            # immediately re-trigger, and record speech end so can_comment()
+            # enforces MIN_GAP from this moment — not from the previous
+            # comment's real playback_finished (which could be 30s stale).
+            self._full_transcript.reset_sentence_count()
+            self._timer.record_speech_end()
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -602,7 +626,6 @@ class ComedianAgent(Agent):
         self._pending_angle_name = angle["name"]
         prompt = build_commentary_request(
             recent_transcript=self._full_transcript.recent_transcript(),
-            conversation_summary=self._full_transcript.summary,
             commentary_history=self._commentary_history,
             trigger_reason=trigger_reason,
             energy_level=energy_level,
@@ -645,7 +668,6 @@ class ComedianAgent(Agent):
         prompt = build_user_reply_request(
             user_text=user_text,
             recent_transcript=self._full_transcript.recent_transcript(),
-            conversation_summary=self._full_transcript.summary,
             commentary_history=self._commentary_history,
             angle=angle,
         )
@@ -670,44 +692,6 @@ class ComedianAgent(Agent):
         )
         if self._user_turn is not None:
             self._user_turn.buffer(text)
-
-    # ==================================================================
-    # Summarisation loop
-    # ==================================================================
-    async def _summarize_loop(self) -> None:
-        """Continuously summarise every podcast line *before* the latest one.
-
-        Spec: the running summary must cover everything said before the
-        newest transcript line (which is delivered verbatim in the prompt).
-        We poll so the summary keeps up — one line behind at worst.
-        """
-        while True:
-            await asyncio.sleep(SUMMARY_POLL_SECONDS)
-            if not self._full_transcript.needs_summary_update():
-                continue
-            pending = self._full_transcript.pending_summarization_text()
-            if not pending.strip():
-                continue
-            await self._update_summary(pending)
-
-    async def _update_summary(self, pending: str) -> None:
-        """Single LLM call to roll the running summary forward."""
-        current_summary = self._full_transcript.summary
-        prompt = build_summary_request(current_summary, pending)
-        try:
-            ctx = llm.ChatContext()
-            ctx.add_message(role="system", content=prompt)
-            ctx.add_message(role="user", content=pending)
-            response = await self._summary_llm.chat(chat_ctx=ctx).collect()
-            self._full_transcript.update_summary(response.text)
-            logger.info(
-                "Transcript summary updated (parts: %d, summary length: %d chars)",
-                self._full_transcript.part_count,
-                len(response.text),
-            )
-            self._persist_summary(response.text)
-        except Exception:
-            logger.warning("Failed to update transcript summary", exc_info=True)
 
     # ==================================================================
     # Event handlers — timer, angle bookkeeping, diagnostics
@@ -780,6 +764,7 @@ class ComedianAgent(Agent):
 
     def _record_commentary(self, agent_text: str) -> None:
         """Append to capped history and persist the agent turn."""
+        logger.info("=== FOX SAID ===\n%s\n=== END FOX SAID ===", agent_text)
         self._commentary_history.append(agent_text)
         self._commentary_history = self._commentary_history[-10:]
 
@@ -794,7 +779,7 @@ class ComedianAgent(Agent):
         """Record the used angle so ``pick_angle`` avoids it next time."""
         if self._pending_angle_name:
             self._recent_angles.append(self._pending_angle_name)
-            self._recent_angles = self._recent_angles[-8:]
+            self._recent_angles = self._recent_angles[-4:]
         self._pending_angle_name = None
 
     def _flush_chat_context(self) -> None:
@@ -885,16 +870,3 @@ class ComedianAgent(Agent):
             name=f"persist.{role}",
         )
 
-    def _persist_summary(self, summary: str) -> None:
-        if not self._session_id or not summary:
-            return
-        _fire_and_forget(
-            update_session_summary(self._session_id, summary),
-            name="persist.summary",
-        )
-        _fire_and_forget(
-            log_conversation_message(
-                self._session_id, "system", summary, {"event": "summary_update"}
-            ),
-            name="persist.summary_log",
-        )

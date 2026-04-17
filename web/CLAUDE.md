@@ -8,8 +8,7 @@ Next.js 16, React 19, TypeScript 5.9, Tailwind CSS v4, LiveKit client.
 
 ```bash
 npm install           # install deps
-npm run dev           # dev server on :3000 (API at localhost:8080)
-npm run prod          # dev server pointing at deployed Fly.io API
+npm run dev           # dev server on :3000 (reads API URL from web/.env)
 npm run build         # production build
 npx eslint .          # lint
 ```
@@ -39,7 +38,7 @@ src/
 
 ## Gotchas
 
-- **`NEXT_PUBLIC_API_URL`** is baked at build time. The `dev` and `prod` npm scripts set it inline. On Vercel, set it in the Environment Variables dashboard.
+- **`NEXT_PUBLIC_API_URL`** is read from `web/.env` (defaults to `http://localhost:8080`). Baked at build time.
 - **Shell `NODE_ENV` warning:** If your shell exports `NODE_ENV=production`, `npm install` skips devDependencies (typescript, tailwind, etc.) and `next dev` warns. Unset it globally.
 - **Imports:** Use `@/` alias for absolute imports (configured in tsconfig.json).
 - **Styling:** Tailwind v4 via `@tailwindcss/postcss` plugin — no `tailwind.config.js` file.

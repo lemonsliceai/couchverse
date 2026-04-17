@@ -119,7 +119,10 @@ def _build_session(vad) -> AgentSession:
     """
     return AgentSession(
         stt=groq.STT(model="whisper-large-v3-turbo"),
-        llm=groq.LLM(model="meta-llama/llama-4-scout-17b-16e-instruct"),
+        llm=groq.LLM(
+            model="llama-3.3-70b-versatile",
+            max_completion_tokens=75,
+        ),
         tts=elevenlabs.TTS(
             model="eleven_turbo_v2_5",
             voice_id=VOICE_ID,
@@ -262,12 +265,14 @@ async def entrypoint(ctx: JobContext) -> None:
         logger.exception("yt-dlp extraction task failed")
         audio_url = None
 
+    logger.info(
+        "=== FOX SYSTEM PROMPT ===\n%s\n=== END SYSTEM PROMPT ===",
+        COMEDIAN_SYSTEM_PROMPT,
+    )
+
     agent = ComedianAgent(
         instructions=COMEDIAN_SYSTEM_PROMPT,
         audio_url=audio_url,
-        # Share the prewarmed VAD between session STT and podcast STT — VAD
-        # instances support multiple concurrent streams.
-        vad=ctx.proc.userdata["vad"],
         # Supplied by the API server when the session row is created. Used
         # to thread every turn (podcast / user / agent) + the rolling
         # summary into the conversation_messages table.

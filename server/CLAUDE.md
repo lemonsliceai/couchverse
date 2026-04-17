@@ -30,7 +30,7 @@ src/podcast_commentary/
 │   ├── speech_gate.py     # Gate logic for "is Fox speaking?"
 │   ├── user_turn.py       # Hold-to-talk state machine with grace timer
 │   ├── prompts.py         # System prompts and context builders
-│   └── angles.py          # 14 comedic angle definitions
+│   └── angles.py          # 7 comedic angle definitions (Silicon Valley style)
 └── core/          # Shared across api and agent
     ├── config.py  # Pydantic BaseSettings (loads .env)
     ├── db.py      # asyncpg pool, migrations, CRUD

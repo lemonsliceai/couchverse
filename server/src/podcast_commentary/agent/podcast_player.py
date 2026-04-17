@@ -1,9 +1,9 @@
 """Server-side podcast audio pipeline.
 
 Runs an ffmpeg subprocess that decodes the YouTube audio URL into 16 kHz mono
-s16le PCM, chunks it into 20 ms `rtc.AudioFrame`s, and pushes them into a
-`RecognizeStream` (typically a `StreamAdapter(groq.STT, silero.VAD)`). The
-browser never touches this audio — it's only used for STT.
+s16le PCM, chunks it into 20 ms `rtc.AudioFrame`s, and pushes them into an
+audio sink (any object with a ``push_frame(AudioFrame)`` method).  The browser
+never touches this audio — it's only used for STT.
 
 Play / pause / seek are all driven by `podcast.control` data-channel messages
 from the client. Because ffmpeg seek is cheap when decoded from a direct-CDN
@@ -14,12 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import Any
 
 from livekit import rtc
-
-if TYPE_CHECKING:
-    from livekit.agents.stt import RecognizeStream
 
 logger = logging.getLogger("podcast-commentary.podcast_player")
 
@@ -35,7 +32,7 @@ class PodcastPlayer:
     """Manages an ffmpeg subprocess that feeds PCM into an STT stream."""
 
     def __init__(
-        self, audio_url: str, stt_stream: "RecognizeStream", proxy: str | None = None,
+        self, audio_url: str, stt_stream: Any, proxy: str | None = None,
     ) -> None:
         self._audio_url = audio_url
         self._stt_stream = stt_stream
