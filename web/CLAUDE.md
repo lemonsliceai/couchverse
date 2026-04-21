@@ -39,6 +39,6 @@ src/
 ## Gotchas
 
 - **`NEXT_PUBLIC_API_URL`** is read from `web/.env` (defaults to `http://localhost:8080`). Baked at build time.
-- **Shell `NODE_ENV` warning:** If your shell exports `NODE_ENV=production`, `npm install` skips devDependencies (typescript, tailwind, etc.) and `next dev` warns. Unset it globally.
+- **All deps live in `dependencies`**, not `devDependencies`. This project is developed and tested with `NODE_ENV=production`, which makes npm skip `devDependencies`. Never split build tooling out — if it's needed to `npm run build`, it's a runtime dep here.
 - **Imports:** Use `@/` alias for absolute imports (configured in tsconfig.json).
 - **Styling:** Tailwind v4 via `@tailwindcss/postcss` plugin — no `tailwind.config.js` file.

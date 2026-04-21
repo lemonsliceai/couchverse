@@ -1,0 +1,14 @@
+{
+  "name": "watch-with-fox-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chrome extension for Watch with Fox",
+  "scripts": {
+    "build": "node build.js",
+    "watch": "node build.js --watch"
+  },
+  "dependencies": {
+    "esbuild": "^0.25.0",
+    "livekit-client": "^2.18.2"
+  }
+}

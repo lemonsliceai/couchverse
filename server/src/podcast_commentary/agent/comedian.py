@@ -31,6 +31,7 @@ from podcast_commentary.agent.commentary import (
     FullTranscript,
     SENTENCE_THRESHOLD,
 )
+from podcast_commentary.agent.fox_config import CONFIG
 from podcast_commentary.agent.podcast_pipeline import PodcastPipeline
 from podcast_commentary.agent.prompts import (
     build_commentary_request,
@@ -63,27 +64,18 @@ def _log_task_exception(task: asyncio.Task) -> None:
     if exc is not None:
         logger.error(
             "Fire-and-forget task %r failed: %s",
-            task.get_name(), exc, exc_info=exc,
+            task.get_name(),
+            exc,
+            exc_info=exc,
         )
 
 
-# Minimum breathing room before the sentence-count trigger can fire after
-# Fox finishes speaking. The real floor is CommentaryTimer.can_comment()
-# (MIN_GAP = 5s from end-of-speech), so this is a secondary safety net.
-POST_SPEECH_DELAY = 2.0
-
-# If no new transcript arrives for this many seconds after entering
-# LISTENING, deliver commentary on whatever has accumulated. Catches
-# podcast pauses, topic transitions, and end-of-video.
-SILENCE_FALLBACK_DELAY = 12.0
-
-# Safety-net timeouts for speech playout.  DataStreamAudioOutput (the
-# LemonSlice avatar path) waits for a `lk.playback_finished` RPC from the
-# avatar worker.  If the avatar never acks — crash, network blip, SDK
-# mismatch — the SpeechHandle hangs forever and the phase state-machine
-# deadlocks.  These timeouts force the transition so the agent recovers.
-INTRO_PLAYOUT_TIMEOUT = 15.0
-COMMENTARY_PLAYOUT_TIMEOUT = 12.0
+# Timing + playout knobs — sourced from the active FoxConfig preset.
+# See fox_configs/default.py for descriptions.
+POST_SPEECH_DELAY = CONFIG.timing.post_speech_safety_s
+SILENCE_FALLBACK_DELAY = CONFIG.timing.silence_fallback_s
+INTRO_PLAYOUT_TIMEOUT = CONFIG.playout.intro_timeout_s
+COMMENTARY_PLAYOUT_TIMEOUT = CONFIG.playout.commentary_timeout_s
 
 
 class FoxPhase(enum.Enum):
@@ -141,6 +133,7 @@ class ComedianAgent(Agent):
         instructions: str,
         *,
         audio_url: str | None = None,
+        audio_source: str = "server",
         session_id: str | None = None,
         proxy: str | None = None,
     ) -> None:
@@ -164,6 +157,7 @@ class ComedianAgent(Agent):
 
         # Podcast audio plumbing — only set if we have a URL to decode.
         self._audio_url = audio_url
+        self._audio_source = audio_source
         self._proxy = proxy
 
         # Collaborators — initialised in `on_enter` once `self.session` is
@@ -200,7 +194,9 @@ class ComedianAgent(Agent):
         if new not in valid:
             logger.error(
                 "Illegal phase transition: %s → %s (allowed: %s)",
-                old.value, new.value, {v.value for v in valid},
+                old.value,
+                new.value,
+                {v.value for v in valid},
             )
             return
         self._phase = new
@@ -226,6 +222,9 @@ class ComedianAgent(Agent):
         self._register_listeners()
         self._log_existing_participants()
         self._start_podcast_pipeline_if_ready()
+        # Must come AFTER pipeline init — the replay may attach the
+        # podcast-audio track to it immediately.
+        self._replay_existing_tracks()
 
         logger.info("Fox entering session — sending intro")
 
@@ -249,16 +248,21 @@ class ComedianAgent(Agent):
     # ------------------------------------------------------------------
     def _compose_collaborators(self) -> None:
         """Instantiate SpeechGate, UserTurnTracker, PodcastPipeline."""
-        self._gate = SpeechGate(
-            self.session, on_released=self._on_speech_released
-        )
+        self._gate = SpeechGate(self.session, on_released=self._on_speech_released)
         self._user_turn = UserTurnTracker(
             session=self.session,
             on_committed=self._handle_user_committed,
             on_start=self._on_user_talk_start,
             on_empty=lambda: self._set_phase(FoxPhase.LISTENING),
         )
-        if self._audio_url:
+        if self._audio_source == "browser":
+            # Browser mode: Chrome extension captures tab audio and publishes
+            # it as a LiveKit track. No audio_url or ffmpeg needed.
+            self._podcast = PodcastPipeline(
+                audio_source="browser",
+                on_transcript=self._handle_podcast_transcript,
+            )
+        elif self._audio_url:
             self._podcast = PodcastPipeline(
                 audio_url=self._audio_url,
                 on_transcript=self._handle_podcast_transcript,
@@ -276,9 +280,7 @@ class ComedianAgent(Agent):
         # `conversation_item_added` gives us Fox's finalised lines for
         # history/angle/persistence. Drives rotation so successive
         # commentaries don't collapse into one voice.
-        self.session.on(
-            "conversation_item_added", self._on_conversation_item_added
-        )
+        self.session.on("conversation_item_added", self._on_conversation_item_added)
         # `agent_state_changed` drives ONLY the CommentaryTimer (real audio
         # start/end). It does NOT gate `is_speaking` — that gate reads
         # `SpeechHandle.done()`, which is authoritative.
@@ -313,6 +315,47 @@ class ComedianAgent(Agent):
                 "Any 'play'/'pause' data packets from the client will be dropped."
             )
 
+    def _replay_existing_tracks(self) -> None:
+        """Replay track_subscribed for tracks that were subscribed before
+        our handler was registered.
+
+        The Chrome extension publishes the ``podcast-audio`` track as soon
+        as its ``room.connect()`` resolves, which is typically BEFORE the
+        agent has been dispatched into the room. When the agent later
+        joins with ``AUTO_SUBSCRIBE_ALL``, LiveKit subscribes to the
+        pre-existing track immediately — but that ``track_subscribed``
+        event fires before ``on_enter`` runs and therefore before
+        ``_register_listeners`` hooks our handler. Without this replay,
+        the track is silently ignored and the STT pipeline never gets any
+        podcast audio.
+
+        Tracks published AFTER ``on_enter`` (e.g. the LemonSlice avatar
+        tracks) are handled normally via the live event; this replay only
+        matters for pre-existing subscriptions.
+        """
+        room = self.session.room_io.room
+        try:
+            participants = list(getattr(room, "remote_participants", {}).values())
+        except Exception:
+            logger.debug("Could not enumerate remote_participants for replay", exc_info=True)
+            return
+
+        for participant in participants:
+            pubs = list(getattr(participant, "track_publications", {}).values())
+            for publication in pubs:
+                track = getattr(publication, "track", None)
+                if track is None:
+                    continue
+                logger.info(
+                    "Replaying pre-existing track_subscribed: name=%s from=%s",
+                    getattr(publication, "name", ""),
+                    getattr(participant, "identity", "?"),
+                )
+                try:
+                    self._log_track_subscribed(track, publication, participant)
+                except Exception:
+                    logger.exception("Replay of track_subscribed failed")
+
     def _speak_intro(self) -> None:
         """Kick off Fox's intro line.
 
@@ -325,15 +368,8 @@ class ComedianAgent(Agent):
         """
         assert self._gate is not None
         self._set_phase(FoxPhase.INTRO)
-        handle = self._gate.speak(
-            prompt=(
-                "Introduce yourself briefly. You're Fox, about to watch a "
-                "video with the user. Keep it to one short, playful sentence."
-            ),
-        )
-        _fire_and_forget(
-            self._await_intro_playout(handle), name="intro_playout"
-        )
+        handle = self._gate.speak(prompt=CONFIG.persona.intro_prompt)
+        _fire_and_forget(self._await_intro_playout(handle), name="intro_playout")
 
     async def _await_intro_playout(self, handle: Any) -> None:
         """Wait for the intro to finish, with a timeout safety net.
@@ -344,9 +380,7 @@ class ComedianAgent(Agent):
         forces the transition so podcast commentary can begin.
         """
         try:
-            await asyncio.wait_for(
-                handle.wait_for_playout(), timeout=INTRO_PLAYOUT_TIMEOUT
-            )
+            await asyncio.wait_for(handle.wait_for_playout(), timeout=INTRO_PLAYOUT_TIMEOUT)
         except asyncio.TimeoutError:
             logger.warning(
                 "Intro playout timed out after %.0fs — forcing INTRO → LISTENING",
@@ -443,21 +477,24 @@ class ComedianAgent(Agent):
             size = len(raw) if isinstance(raw, (bytes, bytearray)) else -1
             logger.info(
                 "Data packet [topic=%s from=%s bytes=%d] not JSON — dropping",
-                topic, sender_id, size,
+                topic,
+                sender_id,
+                size,
             )
             return None
 
         logger.info(
             "Data packet [topic=%s from=%s type=%s]",
-            topic, sender_id, msg.get("type"),
+            topic,
+            sender_id,
+            msg.get("type"),
         )
         return msg
 
     def _dispatch_play(self, msg: dict) -> None:
         if self._podcast is None:
             logger.warning(
-                "Received 'play' but podcast pipeline not initialised "
-                "(audio_url missing?)"
+                "Received 'play' but podcast pipeline not initialised (audio_url missing?)"
             )
             return
         t = float(msg.get("t") or 0.0)
@@ -552,9 +589,7 @@ class ComedianAgent(Agent):
                 name="sentence_threshold_commentary",
             )
 
-    async def _deliver_commentary(
-        self, *, trigger_reason: str, energy_level: str
-    ) -> None:
+    async def _deliver_commentary(self, *, trigger_reason: str, energy_level: str) -> None:
         """Generate and deliver a commentary line.
 
         Gates on phase before AND after the ducking await — a user
@@ -580,7 +615,9 @@ class ComedianAgent(Agent):
         self._full_transcript.reset_sentence_count()
         logger.info(
             "Generating commentary (trigger=%s, angle=%s, stats=%s)",
-            trigger_reason, angle_name, self._timer.stats(),
+            trigger_reason,
+            angle_name,
+            self._timer.stats(),
         )
 
         assert self._gate is not None
@@ -688,7 +725,9 @@ class ComedianAgent(Agent):
         user_talking = self._user_turn.talking if self._user_turn else False
         logger.info(
             "on_user_turn_completed [user_talking=%s, text_len=%d]: %r",
-            user_talking, len(text), text[:150],
+            user_talking,
+            len(text),
+            text[:150],
         )
         if self._user_turn is not None:
             self._user_turn.buffer(text)
@@ -710,7 +749,10 @@ class ComedianAgent(Agent):
         """
         logger.info(
             "Agent state: %s -> %s (phase=%s, is_speaking=%s)",
-            ev.old_state, ev.new_state, self._phase.value, self.is_speaking,
+            ev.old_state,
+            ev.new_state,
+            self._phase.value,
+            self.is_speaking,
         )
         started = ev.new_state == "speaking" and ev.old_state != "speaking"
         # Only `speaking → listening` is a true end-of-speech.
@@ -727,9 +769,7 @@ class ComedianAgent(Agent):
             # fired yet (avatar playout hang), transition the phase here so
             # commentary isn't blocked.  _on_speech_released is idempotent
             # via _set_phase's same-state guard.
-            if self._phase in (
-                FoxPhase.INTRO, FoxPhase.COMMENTATING, FoxPhase.REPLYING
-            ):
+            if self._phase in (FoxPhase.INTRO, FoxPhase.COMMENTATING, FoxPhase.REPLYING):
                 self._on_speech_released()
             elif self._phase == FoxPhase.LISTENING:
                 # Phase already LISTENING (e.g. playout timeout fired early).
@@ -766,20 +806,16 @@ class ComedianAgent(Agent):
         """Append to capped history and persist the agent turn."""
         logger.info("=== FOX SAID ===\n%s\n=== END FOX SAID ===", agent_text)
         self._commentary_history.append(agent_text)
-        self._commentary_history = self._commentary_history[-10:]
+        self._commentary_history = self._commentary_history[-CONFIG.context.comment_memory_size :]
 
-        meta = (
-            {"angle": self._pending_angle_name}
-            if self._pending_angle_name
-            else None
-        )
+        meta = {"angle": self._pending_angle_name} if self._pending_angle_name else None
         self._persist("agent", agent_text, meta)
 
     def _rotate_angle(self) -> None:
         """Record the used angle so ``pick_angle`` avoids it next time."""
         if self._pending_angle_name:
             self._recent_angles.append(self._pending_angle_name)
-            self._recent_angles = self._recent_angles[-4:]
+            self._recent_angles = self._recent_angles[-CONFIG.persona.angle_lookback :]
         self._pending_angle_name = None
 
     def _flush_chat_context(self) -> None:
@@ -814,13 +850,26 @@ class ComedianAgent(Agent):
             return str(getattr(pub, "source", "?"))
 
     def _log_track_subscribed(self, track: Any, publication: Any, participant: Any) -> None:
+        track_name = getattr(publication, "name", "")
         logger.info(
-            "Track subscribed [kind=%s source=%s sid=%s from=%s]",
+            "Track subscribed [kind=%s source=%s sid=%s name=%s from=%s]",
             getattr(track, "kind", "?"),
             self._src_name(publication),
             getattr(publication, "sid", "?"),
+            track_name,
             getattr(participant, "identity", "?"),
         )
+
+        # Browser audio mode: the Chrome extension publishes a track named
+        # "podcast-audio" containing the captured tab audio. Attach it to
+        # the podcast pipeline so STT receives the audio directly.
+        if (
+            track_name == "podcast-audio"
+            and self._podcast is not None
+            and self._podcast.is_browser_mode
+        ):
+            self._podcast.attach_browser_track(track)
+            logger.info("Attached browser podcast-audio track to STT pipeline")
 
     def _log_track_published(self, publication: Any, participant: Any) -> None:
         logger.info(
@@ -839,18 +888,14 @@ class ComedianAgent(Agent):
         try:
             await self._publish_control({"type": "commentary_start"})
         except Exception:
-            logger.warning(
-                "Failed to send commentary_start signal", exc_info=True
-            )
+            logger.warning("Failed to send commentary_start signal", exc_info=True)
 
     async def _publish_commentary_end(self) -> None:
         """Tell the client to un-duck — Fox is done speaking."""
         try:
             await self._publish_control({"type": "commentary_end"})
         except Exception:
-            logger.warning(
-                "Failed to send commentary_end signal", exc_info=True
-            )
+            logger.warning("Failed to send commentary_end signal", exc_info=True)
 
     async def _publish_control(self, payload: dict) -> None:
         await self.session.room_io.room.local_participant.publish_data(
@@ -869,4 +914,3 @@ class ComedianAgent(Agent):
             log_conversation_message(self._session_id, role, content, metadata),
             name=f"persist.{role}",
         )
-

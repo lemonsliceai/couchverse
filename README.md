@@ -232,8 +232,6 @@ Then open <http://localhost:3000> and paste a YouTube URL.
 
 ## Troubleshooting
 
-**Shell `NODE_ENV` gotcha.** If you have `export NODE_ENV=production` in your shell profile, `npm install` will silently skip all `devDependencies` (TypeScript, Tailwind, etc.) and `next dev` will produce a "non-standard NODE_ENV" warning. Unset it globally — frameworks set it per-command.
-
 **Avatar not loading in local dev.** The `AVATAR_URL` in `server/.env` must be publicly reachable. The committed default in `.env.example` points at `localhost`, which won't work with LemonSlice Cloud. Either use the deployed Fly.io URL or expose localhost with `ngrok http 8080` and update `AVATAR_URL` accordingly.
 
 **Agent picking up production jobs (or vice versa).** Make sure `AGENT_NAME` in your local `.env` differs from the production agent name. See [Agent name isolation](#key-architecture-decisions) above.

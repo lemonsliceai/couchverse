@@ -35,6 +35,7 @@ from livekit.plugins import elevenlabs, groq, lemonslice, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from podcast_commentary.agent.comedian import ComedianAgent
+from podcast_commentary.agent.fox_config import CONFIG
 from podcast_commentary.agent.prompts import COMEDIAN_SYSTEM_PROMPT
 from podcast_commentary.core.config import settings
 from podcast_commentary.core.youtube import extract_audio_url, is_youtube_url
@@ -44,16 +45,15 @@ logger = logging.getLogger("podcast-commentary.agent")
 load_dotenv()
 load_dotenv(".env.local", override=True)
 
-# Callum — husky trickster voice; picked for comedic timing.
-VOICE_ID = "N2lVS1w4EtoT3dr4eOWO"
-
 
 server = AgentServer(num_idle_processes=2)
 
 
 def prewarm(proc: JobProcess) -> None:
     """Preload Silero VAD so the first session doesn't pay the cost."""
-    proc.userdata["vad"] = silero.VAD.load(activation_threshold=0.6)
+    proc.userdata["vad"] = silero.VAD.load(
+        activation_threshold=CONFIG.vad.activation_threshold,
+    )
 
 
 server.setup_fnc = prewarm
@@ -88,7 +88,8 @@ def _make_sticky_proxy() -> str | None:
     sticky = urlunparse(parsed._replace(netloc=netloc))
     logger.info(
         "Sticky proxy session created (session=%s, provider=%s)",
-        session_id, parsed.hostname,
+        session_id,
+        parsed.hostname,
     )
     return sticky
 
@@ -118,18 +119,18 @@ def _build_session(vad) -> AgentSession:
         We enforce non-interruption per-turn via `SpeechGate.speak`.
     """
     return AgentSession(
-        stt=groq.STT(model="whisper-large-v3-turbo"),
+        stt=groq.STT(model=CONFIG.stt.model),
         llm=groq.LLM(
-            model="llama-3.3-70b-versatile",
-            max_completion_tokens=75,
+            model=CONFIG.llm.model,
+            max_completion_tokens=CONFIG.llm.max_tokens,
         ),
         tts=elevenlabs.TTS(
-            model="eleven_turbo_v2_5",
-            voice_id=VOICE_ID,
+            model=CONFIG.tts.model,
+            voice_id=CONFIG.tts.voice_id,
             voice_settings=elevenlabs.VoiceSettings(
-                stability=0.4,
-                similarity_boost=0.7,
-                speed=1.05,
+                stability=CONFIG.tts.stability,
+                similarity_boost=CONFIG.tts.similarity_boost,
+                speed=CONFIG.tts.speed,
             ),
         ),
         turn_detection=MultilingualModel(),
@@ -139,9 +140,7 @@ def _build_session(vad) -> AgentSession:
     )
 
 
-async def _start_avatar(
-    metadata: dict, session: AgentSession, ctx: JobContext
-) -> str | None:
+async def _start_avatar(metadata: dict, session: AgentSession, ctx: JobContext) -> str | None:
     """Start the LemonSlice avatar if one was configured."""
     avatar_url = metadata.get("avatar_url")
     if not avatar_url:
@@ -150,14 +149,8 @@ async def _start_avatar(
 
     avatar = lemonslice.AvatarSession(
         agent_image_url=avatar_url,
-        agent_prompt=(
-            "an anthropomorphic fox comedian reacting to a video, animated "
-            "facial expressions, occasionally laughing"
-        ),
-        agent_idle_prompt=(
-            "an anthropomorphic fox listening intently with occasional subtle "
-            "reactions and smirks"
-        ),
+        agent_prompt=CONFIG.avatar.active_prompt,
+        agent_idle_prompt=CONFIG.avatar.idle_prompt,
     )
     try:
         t0 = time.perf_counter()
@@ -169,7 +162,10 @@ async def _start_avatar(
         return None
 
 
-async def _wait_for_avatar_participant(room, timeout: float = 15.0) -> bool:
+async def _wait_for_avatar_participant(
+    room,
+    timeout: float = CONFIG.avatar.startup_timeout_s,
+) -> bool:
     identity = "lemonslice-avatar-agent"
     ready = asyncio.Event()
 
@@ -193,7 +189,8 @@ async def _wait_for_avatar_participant(room, timeout: float = 15.0) -> bool:
 
 
 async def _extract_audio_url(
-    video_url: str | None, proxy: str | None = None,
+    video_url: str | None,
+    proxy: str | None = None,
 ) -> str | None:
     """Resolve a direct-CDN audio URL using yt-dlp.
 
@@ -215,8 +212,8 @@ async def _extract_audio_url(
         return None
     if not is_youtube_url(video_url):
         logger.warning(
-            "!! video_url %r is not a recognised YouTube URL — agent cannot "
-            "extract audio", video_url,
+            "!! video_url %r is not a recognised YouTube URL — agent cannot extract audio",
+            video_url,
         )
         return None
     logger.info("Extracting audio URL (in agent process) for %s", video_url)
@@ -231,7 +228,8 @@ async def _extract_audio_url(
             "pipeline will NOT start. Fox will hear nothing. See earlier "
             "yt-dlp logs for the underlying reason (403 / client block / "
             "signature).",
-            elapsed, video_url,
+            elapsed,
+            video_url,
         )
     return url
 
@@ -246,24 +244,38 @@ async def entrypoint(ctx: JobContext) -> None:
     # local participant before connecting").
     await ctx.connect()
 
-    # Pin the residential proxy to a single exit IP for this job so yt-dlp
-    # and ffmpeg share the same IP (YouTube signed URLs are IP-locked).
-    sticky_proxy = _make_sticky_proxy()
+    audio_source = metadata.get("audio_source", "server")
 
-    # Extract audio URL concurrently with avatar setup so we don't add
-    # yt-dlp latency to session start.
-    audio_url_task = asyncio.create_task(
-        _extract_audio_url(metadata.get("video_url"), proxy=sticky_proxy)
-    )
+    # In browser mode (Chrome extension), the extension captures tab audio
+    # and publishes it as a LiveKit track. No yt-dlp or ffmpeg needed.
+    audio_url = None
+    sticky_proxy = None
+
+    if audio_source == "browser":
+        logger.info(
+            "Browser audio mode — skipping yt-dlp extraction. "
+            "Podcast audio will arrive via LiveKit track from the extension."
+        )
+    else:
+        # Pin the residential proxy to a single exit IP for this job so yt-dlp
+        # and ffmpeg share the same IP (YouTube signed URLs are IP-locked).
+        sticky_proxy = _make_sticky_proxy()
+
+        # Extract audio URL concurrently with avatar setup so we don't add
+        # yt-dlp latency to session start.
+        audio_url_task = asyncio.create_task(
+            _extract_audio_url(metadata.get("video_url"), proxy=sticky_proxy)
+        )
 
     session = _build_session(vad=ctx.proc.userdata["vad"])
     avatar_session_id = await _start_avatar(metadata, session, ctx)
 
-    try:
-        audio_url = await audio_url_task
-    except Exception:
-        logger.exception("yt-dlp extraction task failed")
-        audio_url = None
+    if audio_source != "browser":
+        try:
+            audio_url = await audio_url_task
+        except Exception:
+            logger.exception("yt-dlp extraction task failed")
+            audio_url = None
 
     logger.info(
         "=== FOX SYSTEM PROMPT ===\n%s\n=== END SYSTEM PROMPT ===",
@@ -273,6 +285,7 @@ async def entrypoint(ctx: JobContext) -> None:
     agent = ComedianAgent(
         instructions=COMEDIAN_SYSTEM_PROMPT,
         audio_url=audio_url,
+        audio_source=audio_source,
         # Supplied by the API server when the session row is created. Used
         # to thread every turn (podcast / user / agent) + the rolling
         # summary into the conversation_messages table.

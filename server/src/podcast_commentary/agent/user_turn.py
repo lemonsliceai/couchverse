@@ -26,12 +26,14 @@ from collections.abc import Awaitable, Callable
 
 from livekit.agents.voice import AgentSession
 
+from podcast_commentary.agent.fox_config import CONFIG
+
 logger = logging.getLogger("podcast-commentary.user_turn")
 
 # Grace window after `user_talk_end` before we commit the user turn. Long
 # enough for trailing STT finals to land; short enough that Fox's reply
-# feels responsive.
-GRACE_SECONDS = 1.5
+# feels responsive. Sourced from the active FoxConfig preset.
+GRACE_SECONDS = CONFIG.timing.user_turn_grace_s
 
 
 class UserTurnTracker:
@@ -97,9 +99,7 @@ class UserTurnTracker:
         if self._talking:
             self._buffer.append(text)
         else:
-            logger.info(
-                "Dropping transcript (user not in talk window): %r", text[:80]
-            )
+            logger.info("Dropping transcript (user not in talk window): %r", text[:80])
 
     # ------------------------------------------------------------------
     # Internals
@@ -116,7 +116,8 @@ class UserTurnTracker:
         if token != self._token:
             logger.info(
                 "Grace task superseded (token=%d now=%d) — skipping close",
-                token, self._token,
+                token,
+                self._token,
             )
             return
         self._talking = False
@@ -134,15 +135,16 @@ class UserTurnTracker:
         # commit_user_turn was in flight, making this grace task stale.
         if token != self._token:
             logger.info(
-                "Grace task superseded during commit (token=%d now=%d) — "
-                "dropping result",
-                token, self._token,
+                "Grace task superseded during commit (token=%d now=%d) — dropping result",
+                token,
+                self._token,
             )
             return
 
         logger.info(
             "commit_user_turn returned: %r (buffered finals: %r)",
-            committed, self._buffer,
+            committed,
+            self._buffer,
         )
 
         user_text = (committed or "").strip() or " ".join(self._buffer).strip()

@@ -8,22 +8,23 @@ import logging
 import re
 import time
 
+from podcast_commentary.agent.fox_config import CONFIG
+
 logger = logging.getLogger("podcast-commentary.timing")
 transcript_logger = logging.getLogger("podcast-commentary.transcript")
 
-# Timing parameters (seconds)
-# Minimum quiet between the end of one Fox turn and the start of the
-# next. We measure from *speech end* (avatar playback_finished), not speech
+# Timing parameters (seconds) — sourced from the active FoxConfig preset.
+# MIN_GAP measures from *speech end* (avatar playback_finished), not speech
 # start, so the gate reflects the listener's experience of silence.
-MIN_GAP = 5
-BURST_WINDOW = 60  # Window for burst detection
-BURST_MAX = 8  # Max comments in burst window
-BURST_COOLDOWN = 8  # Mandatory cooldown after burst
+MIN_GAP = CONFIG.timing.min_silence_between_jokes_s
+BURST_WINDOW = CONFIG.timing.burst_window_s
+BURST_MAX = CONFIG.timing.max_jokes_per_burst
+BURST_COOLDOWN = CONFIG.timing.burst_cooldown_s
 
 # Number of sentence-ending punctuation marks (from Whisper output) that
 # must accumulate before Fox triggers commentary. ~5 sentences ≈ 25-35s
 # of podcast speech at typical speaking pace.
-SENTENCE_THRESHOLD = 5
+SENTENCE_THRESHOLD = CONFIG.timing.sentences_before_joke
 
 
 def count_sentences(text: str) -> int:
@@ -32,7 +33,7 @@ def count_sentences(text: str) -> int:
     Whisper-large-v3-turbo reliably punctuates transcripts, so counting
     occurrences of . ? ! is a reasonable proxy for sentence boundaries.
     """
-    return len(re.findall(r'[.!?]', text))
+    return len(re.findall(r"[.!?]", text))
 
 
 class CommentaryTimer:
@@ -98,9 +99,7 @@ class CommentaryTimer:
         self._speech_start_times.append(now)
         # Prune entries older than BURST_WINDOW so the list stays bounded.
         cutoff = now - BURST_WINDOW
-        self._speech_start_times = [
-            t for t in self._speech_start_times if t >= cutoff
-        ]
+        self._speech_start_times = [t for t in self._speech_start_times if t >= cutoff]
 
     def record_speech_end(self) -> None:
         """Called on ``AudioOutput.playback_finished``."""
@@ -137,7 +136,9 @@ class FullTranscript:
         self._sentence_count_since_reset += count_sentences(text)
         transcript_logger.info(
             "TRANSCRIPT [%d] (sentences_since_reset=%d): %s",
-            len(self._parts), self._sentence_count_since_reset, text,
+            len(self._parts),
+            self._sentence_count_since_reset,
+            text,
         )
         return self._sentence_count_since_reset
 
@@ -154,7 +155,7 @@ class FullTranscript:
         """Transcript since Fox's last comment — what he's reacting to."""
         if not self._parts:
             return ""
-        return " ".join(txt for _, txt in self._parts[self._cursor:])
+        return " ".join(txt for _, txt in self._parts[self._cursor :])
 
     def seconds_since_last_utterance(self) -> float | None:
         if not self._parts:

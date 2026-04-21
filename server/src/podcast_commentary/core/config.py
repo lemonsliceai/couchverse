@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     # dispatches to the deployed worker (or vice versa).
     AGENT_NAME: str = "podcast-commentary-agent"
 
+    # Selects which FoxConfig preset the agent loads. Resolves to
+    # src/podcast_commentary/agent/fox_configs/<FOX_CONFIG>.py.
+    # Swap this value and restart the agent to A/B test personalities.
+    FOX_CONFIG: str = "default"
+
     model_config = {"env_file": (".env", ".env.local"), "extra": "ignore"}
 
 

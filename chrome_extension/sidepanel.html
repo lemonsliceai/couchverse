@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Watch with Fox</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="header">
+      <h1>Watch with <em>Fox</em></h1>
+      <div id="status" class="status-dot disconnected">
+        <span class="dot"></span>
+        <span id="status-text">Offline</span>
+      </div>
+    </header>
+
+    <!-- Setup screen (shown before session starts) -->
+    <div id="setup-screen">
+      <div id="video-preview">
+        <div id="thumbnail-frame">
+          <!-- Fox portrait — the setup-screen preview IS Fox, not the video.
+               It visually "becomes" the avatar once the session starts. -->
+          <img id="thumbnail" src="icons/fox_2x3.jpg" alt="Fox" />
+        </div>
+        <p id="video-title" class="video-title">Detecting video...</p>
+      </div>
+      <button id="start-btn" class="btn-primary" disabled>
+        Watch with Fox
+      </button>
+      <div id="settings-row">
+        <label>
+          API URL
+          <input id="api-url" type="text" spellcheck="false" />
+        </label>
+      </div>
+      <p id="setup-error" class="error hidden"></p>
+    </div>
+
+    <!-- Session screen (shown after connection) -->
+    <div id="session-screen" class="hidden">
+
+      <!-- Fox Status Bar — game HUD element -->
+      <div id="fox-status">
+        <span class="status-icon" id="fox-status-icon">&#x1F98A;</span>
+        <span class="status-label">Fox</span>
+        <span class="status-mood" id="fox-mood">Joining...</span>
+      </div>
+
+      <!-- Avatar — The Companion Frame -->
+      <div id="avatar-container">
+        <div id="avatar-loading">
+          <div class="spinner"></div>
+          <p>Fox is joining...</p>
+        </div>
+        <div id="avatar-video"></div>
+        <div id="avatar-badge" class="hidden">
+          <span>Fox</span>
+        </div>
+
+        <!-- Floating reaction particles -->
+        <div id="reactions"></div>
+
+        <!-- Speech bubble captions -->
+        <div id="captions"></div>
+      </div>
+
+      <!-- Audio renderer — hidden elements for Fox's voice -->
+      <div id="audio-container" class="hidden"></div>
+
+      <!-- Controls — Game HUD Panel -->
+      <div id="controls">
+        <!-- Volume controls -->
+        <div class="control-row">
+          <label class="control-label">Video</label>
+          <input id="video-volume" type="range" min="0" max="100" value="80" />
+        </div>
+        <div class="control-row">
+          <label class="control-label fox-label">Fox</label>
+          <input id="fox-volume" type="range" min="0" max="100" value="100" />
+        </div>
+
+        <!-- Action buttons -->
+        <div class="control-actions">
+          <button id="talk-btn" class="btn-talk">
+            <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+            </svg>
+            <span id="talk-label">Hold to talk</span>
+          </button>
+          <button id="end-btn" class="btn-end">End</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="dist/sidepanel.js"></script>
+</body>
+</html>

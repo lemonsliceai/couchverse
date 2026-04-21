@@ -1,0 +1,736 @@
+/* ── Watch with Fox — Cozy Companion HUD ──
+   Lo-fi warmth + cozy game UI + VTuber overlay structure.
+   Warm dark palette, grain texture, rounded game panels,
+   speech-bubble captions, companion-gadget feel. */
+
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700&family=Lora:ital,wght@0,400;0,500;1,400;1,500&display=swap');
+
+:root {
+  /* ── Backgrounds ── */
+  --deep:           #1A1410;
+  --surface:        #2D2420;
+  --elevated:       #3D3430;
+  --sunken:         #140F0B;
+
+  /* ── Borders ── */
+  --edge:           #4D4440;
+  --edge-warm:      #5D4A3A;
+  --frame:          #6B5B4B;
+
+  /* ── Accent (terracotta) ── */
+  --accent:         #D4845A;
+  --accent-hover:   #E0956B;
+  --accent-glow:    rgba(212, 132, 90, 0.18);
+  --accent-soft:    rgba(212, 132, 90, 0.12);
+
+  /* ── Text ── */
+  --warm:           #F2E8DC;
+  --secondary:      #A89888;
+  --muted:          #7A6A5A;
+  --faint:          #5A4A3A;
+  --caption:        #FFFFFF;
+
+  /* ── Reactions ── */
+  --love:           #E88B8B;
+  --laugh:          #F0C674;
+  --fire:           #E8734A;
+
+  /* ── Status ── */
+  --online:         #6BCB77;
+  --danger:         #E85A5A;
+
+  /* ── Shape ── */
+  --radius:         16px;
+  --radius-sm:      10px;
+  --radius-xs:      6px;
+
+  /* ── Typography ── */
+  --font-sans:      "DM Sans", system-ui, -apple-system, sans-serif;
+  --font-serif:     "Lora", Georgia, serif;
+
+  /* ── Shadows (warm-tinted) ── */
+  --shadow-sm:      0 2px 8px rgba(20, 15, 11, 0.4);
+  --shadow-md:      0 4px 16px rgba(20, 15, 11, 0.5);
+  --shadow-lg:      0 8px 32px rgba(20, 15, 11, 0.6);
+  --shadow-glow:    0 0 20px var(--accent-glow);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--deep);
+  color: var(--warm);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+/* ── Grain texture overlay (lo-fi) ── */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 14px;
+  gap: 14px;
+}
+
+/* ════════════════════════════════════════════
+   Header
+   ════════════════════════════════════════════ */
+#header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--edge);
+}
+
+#header h1 {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--warm);
+  letter-spacing: -0.01em;
+}
+
+#header h1 em {
+  font-family: var(--font-serif);
+  color: var(--accent);
+  font-style: italic;
+  font-weight: 500;
+}
+
+/* ── Status indicator ── */
+.status-dot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.status-dot .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: all 0.3s;
+}
+
+.status-dot.connected .dot {
+  background: var(--online);
+  box-shadow: 0 0 8px rgba(107, 203, 119, 0.4);
+}
+.status-dot.connected { color: var(--online); }
+
+.status-dot.connecting .dot {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  animation: pulse-glow 1.5s ease-in-out infinite;
+}
+.status-dot.connecting { color: var(--accent); }
+
+.status-dot.disconnected .dot { background: var(--muted); }
+
+/* ════════════════════════════════════════════
+   Setup Screen
+   ════════════════════════════════════════════ */
+#setup-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Video preview card — cozy game panel.
+   The preview matches the avatar's 2:3 portrait ratio so the setup screen
+   and the session screen feel like the same shape/space (the preview
+   frame visually "becomes" the avatar frame once the session starts). */
+#video-preview {
+  background: var(--surface);
+  border: 2px solid var(--edge);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Fixed-aspect wrapper — the box size is predictable whether or not the
+   <img> has a src yet (Chrome's aspect-ratio support on bare <img> with
+   no intrinsic dimensions is inconsistent). */
+#thumbnail-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  background: var(--sunken);
+  overflow: hidden;
+}
+
+#thumbnail {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.video-title {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-top: 1px solid var(--edge);
+}
+
+/* Primary CTA — chunky game button */
+.btn-primary {
+  width: 100%;
+  padding: 13px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--deep);
+  background: var(--accent);
+  border: 2px solid var(--accent-hover);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: var(--shadow-md), 0 0 0 0 var(--accent-glow);
+  letter-spacing: 0.01em;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: var(--shadow-lg), var(--shadow-glow);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+
+.btn-primary:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  border-color: var(--edge);
+}
+
+.btn-primary.loading {
+  opacity: 0.65;
+  cursor: wait;
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Settings — subtle, tucked away */
+#settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#settings-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+#settings-row input {
+  padding: 7px 10px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  background: var(--sunken);
+  color: var(--secondary);
+  border: 2px solid var(--edge);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+#settings-row input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  color: var(--warm);
+}
+
+.error {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--danger);
+  padding: 8px 12px;
+  background: rgba(232, 90, 90, 0.08);
+  border: 1px solid rgba(232, 90, 90, 0.2);
+  border-radius: var(--radius-sm);
+}
+
+.hidden { display: none !important; }
+
+/* ════════════════════════════════════════════
+   Session Screen
+   ════════════════════════════════════════════ */
+#session-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+}
+
+/* ── Fox Status Bar (game HUD element) ── */
+#fox-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 2px solid var(--edge);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--secondary);
+}
+
+#fox-status .status-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+#fox-status .status-label {
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+#fox-status .status-mood {
+  flex: 1;
+  text-align: right;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ════════════════════════════════════════════
+   Avatar — The Companion Frame
+   Themed "device frame" like a portrait in a cozy game.
+   ════════════════════════════════════════════ */
+#avatar-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  background: var(--sunken);
+  border: 3px solid var(--frame);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow:
+    var(--shadow-md),
+    inset 0 0 30px rgba(0, 0, 0, 0.3);
+  transition: box-shadow 0.5s, border-color 0.5s;
+}
+
+/* Breathing glow when connected — the companion is "alive" */
+#avatar-container.breathing {
+  animation: companion-breathe 3.5s ease-in-out infinite;
+  border-color: var(--edge-warm);
+}
+
+/* Speaking state — brighter glow */
+#avatar-container.speaking {
+  border-color: var(--accent);
+  box-shadow:
+    var(--shadow-md),
+    0 0 24px var(--accent-glow),
+    inset 0 0 20px rgba(212, 132, 90, 0.05);
+}
+
+#avatar-video {
+  width: 100%;
+  height: 100%;
+}
+
+/* Loading state */
+#avatar-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  z-index: 10;
+  background: radial-gradient(ellipse at center, var(--surface) 0%, var(--sunken) 100%);
+}
+
+#avatar-loading p {
+  font-size: 13px;
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--secondary);
+  animation: pulse-text 2.5s ease-in-out infinite;
+}
+
+.spinner {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 3px solid var(--edge);
+  border-top-color: var(--accent);
+  animation: spin 1s linear infinite;
+}
+
+/* Name badge — game-style nameplate */
+#avatar-badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  backdrop-filter: blur(12px);
+  background: rgba(26, 20, 16, 0.8);
+  padding: 4px 12px;
+  border-radius: 20px;
+  border: 2px solid var(--edge-warm);
+  z-index: 10;
+  box-shadow: var(--shadow-sm);
+}
+
+#avatar-badge span {
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--accent);
+}
+
+/* ── Reactions container (floating particles) ── */
+#reactions {
+  position: absolute;
+  bottom: 60px;
+  right: 12px;
+  z-index: 15;
+  pointer-events: none;
+}
+
+.reaction-particle {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  font-size: 18px;
+  opacity: 0;
+  animation: float-up 1.8s ease-out forwards;
+}
+
+/* ════════════════════════════════════════════
+   Captions — Game Dialogue Speech Bubbles
+   ════════════════════════════════════════════ */
+#captions {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 14px;
+  z-index: 10;
+  pointer-events: none;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+#captions:empty { display: none; }
+
+/* Each caption is a speech bubble */
+#captions .speech-bubble {
+  background: rgba(26, 20, 16, 0.88);
+  backdrop-filter: blur(10px);
+  border: 1.5px solid var(--edge);
+  border-radius: 14px 14px 14px 4px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(242, 232, 220, 0.5);
+  transition: all 0.3s;
+  max-width: 95%;
+  box-shadow: var(--shadow-sm);
+}
+
+#captions .speech-bubble:last-child {
+  color: var(--warm);
+  border-color: var(--edge-warm);
+  background: rgba(26, 20, 16, 0.92);
+  animation: bubble-appear 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* Speech bubble tail on the latest message */
+#captions .speech-bubble:last-child::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 12px;
+  width: 12px;
+  height: 12px;
+  background: rgba(26, 20, 16, 0.92);
+  border-bottom: 1.5px solid var(--edge-warm);
+  border-left: 1.5px solid var(--edge-warm);
+  transform: rotate(-45deg);
+  clip-path: polygon(0 0, 0 100%, 100% 100%);
+}
+
+/* ════════════════════════════════════════════
+   Controls — Game HUD Panel
+   ════════════════════════════════════════════ */
+#controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--surface);
+  border: 2px solid var(--edge);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.control-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  width: 40px;
+  flex-shrink: 0;
+}
+
+.fox-label {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-weight: 500;
+  color: var(--accent);
+  text-transform: none;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+/* ── Range sliders (game-style) ── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 24px;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--sunken);
+  border: 1px solid var(--edge);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--accent-hover);
+  margin-top: -7px;
+  box-shadow: 0 0 8px var(--accent-glow);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  box-shadow: 0 0 14px rgba(212, 132, 90, 0.4);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+  transform: scale(0.95);
+}
+
+/* ── Action buttons ── */
+.control-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* Hold to talk — chunky game button */
+.btn-talk {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--secondary);
+  background: var(--elevated);
+  border: 2px solid var(--edge);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  user-select: none;
+  touch-action: none;
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-talk:hover {
+  color: var(--warm);
+  background: var(--edge);
+  border-color: var(--edge-warm);
+  transform: translateY(-1px);
+}
+
+.btn-talk.active {
+  color: var(--deep);
+  background: var(--accent);
+  border-color: var(--accent-hover);
+  box-shadow: var(--shadow-glow), var(--shadow-sm);
+  transform: scale(1.04);
+}
+
+.btn-talk.active .mic-icon {
+  animation: mic-pulse 0.8s ease-in-out infinite;
+}
+
+.mic-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* End session — danger button */
+.btn-end {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+  background: rgba(232, 90, 90, 0.08);
+  border: 2px solid rgba(232, 90, 90, 0.15);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-end:hover {
+  background: rgba(232, 90, 90, 0.14);
+  border-color: rgba(232, 90, 90, 0.3);
+  transform: translateY(-1px);
+}
+
+/* ════════════════════════════════════════════
+   Animations
+   ════════════════════════════════════════════ */
+
+/* Companion frame breathing glow */
+@keyframes companion-breathe {
+  0%, 100% {
+    box-shadow:
+      var(--shadow-md),
+      0 0 12px rgba(212, 132, 90, 0.06),
+      inset 0 0 30px rgba(0, 0, 0, 0.3);
+  }
+  50% {
+    box-shadow:
+      var(--shadow-md),
+      0 0 28px rgba(212, 132, 90, 0.14),
+      inset 0 0 20px rgba(0, 0, 0, 0.2);
+  }
+}
+
+/* Speech bubble entrance — spring overshoot */
+@keyframes bubble-appear {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.92);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-2px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Floating reaction particles */
+@keyframes float-up {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  70% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-80px) translateX(var(--drift, 0px)) scale(0.6);
+  }
+}
+
+/* Pulsing glow for connecting/loading states */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: var(--shadow-md), 0 0 0 0 transparent; }
+  50% { box-shadow: var(--shadow-md), var(--shadow-glow); }
+}
+
+@keyframes pulse-text {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.9; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Mic icon pulse when active */
+@keyframes mic-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+
+/* ════════════════════════════════════════════
+   Scrollbar (dark themed)
+   ════════════════════════════════════════════ */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--edge);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--edge-warm);
+}
+
+/* ── Selection ── */
+::selection {
+  background: rgba(212, 132, 90, 0.25);
+  color: var(--warm);
+}

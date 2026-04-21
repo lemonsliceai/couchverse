@@ -23,6 +23,7 @@ router = APIRouter()
 class CreateSessionRequest(BaseModel):
     video_url: str
     video_title: str | None = None
+    source: str | None = None  # "extension" when created by the Chrome extension
 
 
 class CreateSessionResponse(BaseModel):
@@ -51,11 +52,17 @@ async def create_session_route(request: CreateSessionRequest, req: Request):
     # server extracts the URL, ffmpeg on the agent worker (different IP) gets
     # a 403. Letting the agent extract means the signed URL's ip= param
     # matches the process that ultimately fetches it.
+    # When the Chrome extension creates a session, it captures tab audio
+    # directly and publishes it as a LiveKit track. The agent subscribes to
+    # that track instead of running yt-dlp + ffmpeg.
+    audio_source = "browser" if request.source == "extension" else "server"
+
     metadata = {
         "session_id": session_id,
         "video_url": request.video_url,
         "video_title": request.video_title or "",
         "avatar_url": settings.AVATAR_URL,
+        "audio_source": audio_source,
     }
 
     token = (
