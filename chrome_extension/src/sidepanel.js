@@ -5,7 +5,7 @@
  * bundled by esbuild into dist/sidepanel.js (which sidepanel.html loads).
  *
  * Audio flow:
- *   YouTube tab audio → chrome.tabCapture → MediaStream → LiveKit track
+ *   Tab audio (any site) → chrome.tabCapture → MediaStream → LiveKit track
  *   → Agent subscribes → Groq STT → Commentary generation
  */
 
@@ -47,7 +47,31 @@ let tabAudioStream = null;
 let tabAudioContext = null;
 let tabAudioGain = null;
 let ducking = false;
-let captions = [];
+// Tracks which personas are currently mid-utterance. Ducking holds while
+// the set is non-empty so back-to-back turns from different speakers don't
+// punch the video back up between them.
+const speakingNow = new Set();
+// Per-persona caption history keyed by persona name (e.g. "default", "chaos_agent").
+const captionsByPersona = new Map();
+
+// LemonSlice avatar participants are named lemonslice-avatar-<persona>.
+// Routing decisions in onTrackSubscribed / onActiveSpeakers parse the suffix.
+const AVATAR_IDENTITY_PREFIX = "lemonslice-avatar-";
+
+function personaFromAvatarIdentity(identity) {
+  if (!identity || !identity.startsWith(AVATAR_IDENTITY_PREFIX)) return null;
+  return identity.slice(AVATAR_IDENTITY_PREFIX.length);
+}
+
+function slotFor(personaName) {
+  if (!personaName) return null;
+  return document.querySelector(`.avatar-slot[data-name="${personaName}"]`);
+}
+
+function labelFor(personaName) {
+  const slot = slotFor(personaName);
+  return slot?.dataset.label || personaName || "";
+}
 
 // ── Init ──
 document.addEventListener("DOMContentLoaded", async () => {
@@ -70,8 +94,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
-  // Detect active YouTube tab
-  detectYouTubeTab();
+  // Detect active media tab
+  detectActiveMedia();
 
   // Wire up controls
   $("#start-btn").addEventListener("click", startSession);
@@ -79,54 +103,45 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // Listen for content script messages relayed through background
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === "yt-state-update") {
-      handleYouTubeStateUpdate(msg);
+    if (msg.type === "media-state-update") {
+      handleMediaStateUpdate(msg);
     }
-    if (msg.type === "yt-video-info") {
+    if (msg.type === "media-video-info") {
       updateVideoPreview(msg);
     }
   });
 });
 
-// ── YouTube Tab Detection ──
-// Detection never blocks on the content script — if the YouTube tab was
-// open before the extension was (re)loaded, the content script was never
-// injected into it and `chrome.tabs.sendMessage` would fail silently,
-// leaving the UI stuck on "Detecting video...". Instead, derive everything
-// we need for the setup screen (videoId, title, URL) directly from the
-// tab's own metadata, which is always available via `activeTab`.
+// ── Active Tab / Media Detection ──
+// Detection never blocks on the content script — if the page was open before
+// the extension was (re)loaded, the content script was never injected into
+// it and `chrome.tabs.sendMessage` would fail silently, leaving the UI stuck
+// on "Detecting video...". Instead, derive what we can (URL, title) directly
+// from the tab's own metadata, which is always available via `activeTab`.
 //
 // The content script is still useful for runtime events (play/pause/seek
 // monitoring during a session), so if it isn't responding we inject it
-// programmatically via chrome.scripting. A later info message from the
-// freshly-injected script will arrive via onMessage and refine the title.
-async function detectYouTubeTab() {
+// programmatically via chrome.scripting.
+async function detectActiveMedia() {
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   const tab = tabs[0];
   if (!tab) return;
 
   activeTabId = tab.id;
 
-  if (!tab.url || !tab.url.includes("youtube.com/watch")) {
+  if (!isCapturableTabUrl(tab.url)) {
     showNoVideoState();
     return;
   }
 
-  // Primary source: parse the tab's own metadata. Works immediately
-  // regardless of content script injection state.
-  const videoId = extractVideoIdFromUrl(tab.url);
-  const title = (tab.title || "").replace(/ - YouTube$/i, "").trim();
+  // Use the tab's own metadata as the immediate preview. Strip common
+  // " - Site Name" suffixes for nicer display.
+  const title = stripTitleSuffix(tab.title || "") || tab.url;
+  updateVideoPreview({ url: tab.url, title });
 
-  if (videoId) {
-    updateVideoPreview({ url: tab.url, videoId, title });
-  } else {
-    showNoVideoState();
-    return;
-  }
-
-  // Secondary: ping the content script. If it replies, great. If it
-  // doesn't (ReceiverError), inject it so play/pause monitoring works
-  // once the session starts.
+  // Ping the content script for richer info (and to confirm it's alive).
+  // If it doesn't reply, inject it so play/pause monitoring works once the
+  // session starts.
   try {
     const info = await chrome.tabs.sendMessage(tab.id, { type: "get-video-info" });
     if (info) updateVideoPreview(info);
@@ -137,24 +152,33 @@ async function detectYouTubeTab() {
         target: { tabId: tab.id },
         files: ["content.js"],
       });
-      // Newly injected script will push a yt-video-info message shortly.
+      // Freshly-injected script will push a media-video-info message shortly.
     } catch (err) {
       console.warn("[ext] Content script injection failed:", err);
     }
   }
 }
 
-function extractVideoIdFromUrl(url) {
-  try {
-    return new URL(url).searchParams.get("v") || "";
-  } catch {
-    return "";
-  }
+function isCapturableTabUrl(url) {
+  if (!url) return false;
+  // chrome://, edge://, about:, file:, view-source: etc. can't be tab-captured.
+  return url.startsWith("http://") || url.startsWith("https://");
+}
+
+// Trim the trailing " - Site Name" / " | Site Name" / " — Site Name" that
+// most sites tack onto <title>. Leaves the leading content (which is almost
+// always the actual media title) untouched.
+function stripTitleSuffix(title) {
+  return title
+    .replace(/\s+[-|–—]\s+[^-|–—]+$/, "")
+    .trim();
 }
 
 function showNoVideoState() {
-  $("#video-title").textContent = "Open a YouTube video in this tab";
+  $("#video-title").textContent = "Open a video or audio page in this tab";
   $("#start-btn").disabled = true;
+  delete $("#start-btn").dataset.videoUrl;
+  delete $("#start-btn").dataset.videoTitle;
 }
 
 function updateVideoPreview(info) {
@@ -176,7 +200,7 @@ async function startSession() {
   const apiUrl = $("#api-url").value.trim();
 
   if (!videoUrl) {
-    showError("No YouTube video detected");
+    showError("No active media tab detected");
     return;
   }
 
@@ -209,7 +233,7 @@ async function startSession() {
     showError(err.message);
     btn.disabled = false;
     btn.classList.remove("loading");
-    btn.textContent = "Watch with Fox";
+    btn.textContent = "Watch with Fox & Alien";
     $("#setup-screen").classList.remove("hidden");
     $("#session-screen").classList.add("hidden");
   }
@@ -227,8 +251,20 @@ async function endSession() {
     unduckTimer = null;
   }
   ducking = false;
-  captions = [];
-  renderCaptions();
+  speakingNow.clear();
+  captionsByPersona.clear();
+  document
+    .querySelectorAll(".avatar-slot .captions")
+    .forEach((el) => (el.innerHTML = ""));
+  document
+    .querySelectorAll(".avatar-slot")
+    .forEach((el) => {
+      el.classList.remove("speaking", "breathing", "video-live");
+      // Drop the live video element so the next session starts from a
+      // clean preview-only state.
+      const videoContainer = el.querySelector(".avatar-video");
+      if (videoContainer) videoContainer.innerHTML = "";
+    });
 
   // Return to setup screen
   $("#session-screen").classList.add("hidden");
@@ -238,8 +274,8 @@ async function endSession() {
   btn.classList.remove("loading");
   btn.textContent = "Watch with Fox";
 
-  // Re-detect video
-  detectYouTubeTab();
+  // Re-detect media in the active tab
+  detectActiveMedia();
 }
 
 // ── API ──
@@ -315,11 +351,11 @@ async function captureAndPublishTabAudio() {
   // 3. Route the captured audio back to the user's speakers.
   //
   // chrome.tabCapture intercepts the tab's audio output — without this
-  // loopback the YouTube video would appear to mute the moment we start
-  // capturing. Piping through an AudioContext to `destination` plays the
-  // same audio the agent receives back out through the local speakers.
-  // The gain node is used solely for ducking while Fox is talking; at rest
-  // it stays at 1.0 so the user's own YouTube / system volume is preserved.
+  // loopback the page would appear to mute the moment we start capturing.
+  // Piping through an AudioContext to `destination` plays the same audio
+  // the agent receives back out through the local speakers. The gain node
+  // is used solely for ducking while Fox is talking; at rest it stays at
+  // 1.0 so the page's own volume is preserved.
   tabAudioContext = new AudioContext();
   // Side panels are usually activated by a user gesture, but some Chromium
   // builds still create the context in "suspended" state. Explicit resume
@@ -378,33 +414,39 @@ function teardownTabAudio() {
 
 // ── LiveKit Event Handlers ──
 function onTrackSubscribed(track, publication, participant) {
-  const isAvatar =
-    participant.identity === "lemonslice-avatar-agent" ||
-    participant.attributes?.["lk.publish_on_behalf"];
+  const personaName = personaFromAvatarIdentity(participant.identity);
+  const isAvatarTrack =
+    personaName !== null || participant.attributes?.["lk.publish_on_behalf"];
 
-  if (!isAvatar && track.kind === Track.Kind.Audio) {
-    // Fox's voice — attach to a hidden audio element
+  // Audio from non-avatar participants is the persona voice itself
+  // (when published directly without LemonSlice). Pipe it to the audio
+  // container so it's audible even if the avatar pipeline is down.
+  if (!isAvatarTrack && track.kind === Track.Kind.Audio) {
     const el = track.attach();
     $("#audio-container").appendChild(el);
     return;
   }
+  if (!isAvatarTrack) return;
 
-  if (!isAvatar) return;
+  // For avatar tracks we now know which slot they belong to.
+  const slot = slotFor(personaName);
 
-  if (track.kind === Track.Kind.Video) {
-    const container = $("#avatar-video");
+  if (track.kind === Track.Kind.Video && slot) {
+    const container = slot.querySelector(".avatar-video");
     const el = track.attach();
     el.style.width = "100%";
     el.style.height = "100%";
     el.style.objectFit = "cover";
-    el.style.borderRadius = "17px";
+    el.style.borderRadius = "15px";
     container.innerHTML = "";
     container.appendChild(el);
-    $("#avatar-loading").classList.add("hidden");
-    $("#avatar-badge").classList.remove("hidden");
-    $("#avatar-container").classList.add("breathing");
+    // Swap the still preview for the live video. The `video-live` class
+    // drives a fade-in on the video + fade-out on the still image so the
+    // transition reads as the preview "animating into" the avatar.
+    slot.classList.add("video-live", "breathing");
     setFoxMood("Vibing");
-    spawnReaction("eyes");
+    spawnReaction(slot, "eyes");
+    return;
   }
 
   if (track.kind === Track.Kind.Audio) {
@@ -425,50 +467,81 @@ function onDataReceived(payload, participant, kind, topic) {
     return;
   }
 
-  // Agent ready handshake — sync current YouTube playhead
+  // Agent ready handshake — sync current playhead
   if (topic === "commentary.control" && msg.type === "agent_ready") {
     console.log("[ext] Agent ready — syncing playhead");
     setFoxMood("Listening");
+    setStatusSpeaker("The Couch");
     syncPlayheadToAgent();
     return;
   }
 
-  // Commentary lifecycle — authoritative source for ducking. These bracket
-  // a whole utterance, so they don't flicker the way VAD active-speaker
-  // events do between words.
+  // Commentary lifecycle — authoritative source for ducking and per-slot
+  // speaker highlighting. The Director tags every commentary_start/end
+  // with the persona name so we know which slot lights up.
   if (topic === "commentary.control" && msg.type === "commentary_start") {
+    const personaName = msg.speaker;
     setFoxMood("Cooking");
-    $("#avatar-container").classList.add("speaking");
-    spawnReaction("random");
+    setStatusSpeaker(labelFor(personaName));
+    if (personaName) {
+      speakingNow.add(personaName);
+      const slot = slotFor(personaName);
+      slot?.classList.add("speaking");
+      spawnReaction(slot, "random");
+    }
     setDucking(true);
     return;
   }
 
   if (topic === "commentary.control" && msg.type === "commentary_end") {
-    setFoxMood("Listening");
-    $("#avatar-container").classList.remove("speaking");
-    setDucking(false);
+    const personaName = msg.speaker;
+    if (personaName) {
+      speakingNow.delete(personaName);
+      slotFor(personaName)?.classList.remove("speaking");
+    }
+    if (speakingNow.size === 0) {
+      setFoxMood("Listening");
+      setStatusSpeaker("The Couch");
+      setDucking(false);
+    }
     return;
   }
 
   // Captions
   if (msg.type === "agent_transcript" || msg.text) {
     const text = msg.text || msg.content;
-    if (text) addCaption(text);
+    const personaName = msg.speaker || guessSpeakerFromState();
+    if (text) addCaption(personaName, text);
   }
 }
 
-// VAD-driven active-speaker updates only drive the avatar "speaking" CSS
-// class — purely visual, so it's fine if it flickers. Ducking is handled
-// by commentary_start/commentary_end data messages (see onDataReceived).
+// Fallback when a transcript message doesn't carry a `speaker` field
+// (older agent build). Pick the persona currently mid-utterance, or fall
+// back to the first slot if nobody is.
+function guessSpeakerFromState() {
+  if (speakingNow.size === 1) return speakingNow.values().next().value;
+  const first = document.querySelector(".avatar-slot");
+  return first?.dataset.name || null;
+}
+
+// VAD-driven active-speaker updates highlight the matching slot only
+// when commentary.control hasn't already lit it. Purely visual jitter is
+// acceptable here; commentary_start/end remains the authoritative source.
 function onActiveSpeakers(speakers) {
   const localId = room?.localParticipant?.identity;
-  const remoteSpeaking = speakers.some((p) => p.identity !== localId);
-
-  if (remoteSpeaking) {
-    $("#avatar-container").classList.add("speaking");
-  } else {
-    $("#avatar-container").classList.remove("speaking");
+  const activePersonas = new Set();
+  for (const p of speakers) {
+    if (p.identity === localId) continue;
+    const personaName = personaFromAvatarIdentity(p.identity);
+    if (personaName) activePersonas.add(personaName);
+  }
+  for (const slot of document.querySelectorAll(".avatar-slot")) {
+    const name = slot.dataset.name;
+    if (activePersonas.has(name) || speakingNow.has(name)) {
+      slot.classList.add("speaking");
+    } else {
+      slot.classList.remove("speaking");
+    }
   }
 }
 
@@ -512,15 +585,18 @@ async function syncPlayheadToAgent() {
   }
 }
 
-function handleYouTubeStateUpdate(msg) {
+function handleMediaStateUpdate(msg) {
   if (!room || room.state !== ConnectionState.Connected) return;
 
-  // Relay play/pause events to agent via data channel
-  if (msg.playing) {
-    publishControl({ type: "play", t: msg.time }, "podcast.control");
-  } else {
-    publishControl({ type: "pause" }, "podcast.control");
+  // Pausing the media cuts the tab-audio track the agent relies on for STT,
+  // so there's nothing left for Fox to react to. End the session rather
+  // than leave the avatar streaming into silence.
+  if (!msg.playing) {
+    endSession();
+    return;
   }
+
+  publishControl({ type: "play", t: msg.time }, "podcast.control");
 }
 
 // ── Data Channel ──
@@ -541,7 +617,7 @@ async function publishControl(payload, topic) {
 // When Fox speaks, drop the video to a low but still-audible level rather
 // than muting. Around -12 dB (25%) is the standard range for dialog ducking;
 // going much lower makes the transitions feel dramatic and pump-y. At rest
-// the gain is 1.0 — we never modify the user's own YouTube/system volume.
+// the gain is 1.0 — we never modify the user's own page/system volume.
 const DUCK_GAIN = 0.25;
 const PASSTHROUGH_GAIN = 1.0;
 
@@ -593,15 +669,21 @@ function applyDucking() {
 }
 
 // ── Captions (Speech Bubbles) ──
-function addCaption(text) {
-  captions.push(text);
-  if (captions.length > 4) captions = captions.slice(-4);
-  renderCaptions();
+function addCaption(personaName, text) {
+  if (!personaName) return;
+  const slot = slotFor(personaName);
+  if (!slot) return;
+  const list = captionsByPersona.get(personaName) || [];
+  list.push(text);
+  while (list.length > 3) list.shift();
+  captionsByPersona.set(personaName, list);
+  renderCaptions(slot, list);
 }
 
-function renderCaptions() {
-  const container = $("#captions");
-  container.innerHTML = captions
+function renderCaptions(slot, list) {
+  const container = slot.querySelector(".captions");
+  if (!container) return;
+  container.innerHTML = list
     .map((c) => `<div class="speech-bubble">${escapeHtml(c)}</div>`)
     .join("");
 }
@@ -620,8 +702,9 @@ const REACTION_SETS = {
   fire:  ["\u{1F525}", "\u{1F4A5}", "\u{26A1}"],
 };
 
-function spawnReaction(type) {
-  const container = $("#reactions");
+function spawnReaction(slot, type) {
+  if (!slot) return;
+  const container = slot.querySelector(".reactions");
   if (!container) return;
 
   // Pick a random set if type is "random"
@@ -662,6 +745,13 @@ function setFoxMood(mood) {
   const iconEl = $("#fox-status-icon");
   if (moodEl) moodEl.textContent = mood;
   if (iconEl) iconEl.textContent = MOOD_ICONS[mood] || "\u{1F98A}";
+}
+
+// Update the status bar's speaker label so the user can see at a glance
+// which persona is currently mid-utterance.
+function setStatusSpeaker(label) {
+  const el = $("#status-speaker");
+  if (el) el.textContent = label || "The Couch";
 }
 
 // ── UI Helpers ──

@@ -42,7 +42,9 @@ async def _try_get_pool() -> asyncpg.Pool | None:
         return await _get_pool()
     except Exception:
         if not _pool_unavailable_warned:
-            logger.warning("Failed to open DB pool — conversation persistence disabled", exc_info=True)
+            logger.warning(
+                "Failed to open DB pool — conversation persistence disabled", exc_info=True
+            )
             _pool_unavailable_warned = True
         return None
 
@@ -189,7 +191,9 @@ async def log_conversation_message(
     except Exception:
         logger.warning(
             "Failed to persist conversation message [role=%s, session=%s]",
-            role, session_id, exc_info=True,
+            role,
+            session_id,
+            exc_info=True,
         )
 
 
@@ -206,6 +210,4 @@ async def update_session_summary(session_id: str, summary: str) -> None:
                 session_id,
             )
     except Exception:
-        logger.warning(
-            "Failed to update session summary [session=%s]", session_id, exc_info=True
-        )
+        logger.warning("Failed to update session summary [session=%s]", session_id, exc_info=True)

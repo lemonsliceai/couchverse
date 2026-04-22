@@ -83,9 +83,15 @@ body::before {
 #app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  padding: 14px;
-  gap: 14px;
+  /* `height` (not min-height) so the session screen's flex children can
+     actually shrink to fit the viewport — with min-height the avatars
+     would blow past the fold instead of splitting the available space. */
+  height: 100vh;
+  /* Fill the Chrome side panel width with a small breathing margin on
+     each side. No narrow-column cap — the avatars use flex + min-height
+     to shrink when their 2:3 aspect would overflow the viewport. */
+  padding: 12px 10px;
+  gap: 12px;
 }
 
 /* ════════════════════════════════════════════
@@ -149,38 +155,72 @@ body::before {
 .status-dot.disconnected .dot { background: var(--muted); }
 
 /* ════════════════════════════════════════════
-   Setup Screen
+   Setup Screen — mirrors the session screen's vertical rhythm
+   (status bar → stacked portraits → controls panel) so the
+   transition from setup to live avatars feels like the same
+   space animating rather than a layout swap.
    ════════════════════════════════════════════ */
 #setup-screen {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
 }
 
-/* Video preview card — cozy game panel.
-   The preview matches the avatar's 2:3 portrait ratio so the setup screen
-   and the session screen feel like the same shape/space (the preview
-   frame visually "becomes" the avatar frame once the session starts). */
-#video-preview {
+/* Video-title status bar — visual twin of #fox-status. */
+#setup-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
   background: var(--surface);
   border: 2px solid var(--edge);
-  border-radius: var(--radius);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--secondary);
 }
 
-/* Fixed-aspect wrapper — the box size is predictable whether or not the
-   <img> has a src yet (Chrome's aspect-ratio support on bare <img> with
-   no intrinsic dimensions is inconsistent). */
-#thumbnail-frame {
+#setup-status .status-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+#setup-status .status-mood {
+  flex: 1;
+  color: var(--secondary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Fox + Alien stacked vertically — same sizing rules as
+   #avatars-stack / .avatar-slot on the session screen. */
+#cast-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.cast-portrait {
   position: relative;
-  width: 100%;
+  flex: 1 1 0;
+  min-height: 0;
   aspect-ratio: 2 / 3;
+  width: auto;
+  max-width: 100%;
   background: var(--sunken);
+  border-radius: var(--radius-sm);
   overflow: hidden;
+  box-shadow: var(--shadow-md);
+  animation: preview-breathe 3s ease-in-out infinite;
 }
 
-#thumbnail {
+.cast-portrait img {
   position: absolute;
   inset: 0;
   width: 100%;
@@ -189,15 +229,41 @@ body::before {
   display: block;
 }
 
-.video-title {
-  padding: 10px 14px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  border-top: 1px solid var(--edge);
+/* Matches .avatar-slot .avatar-badge so the Fox/Alien nameplate is
+   identical on both screens. */
+.cast-badge-wrap {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 3px 10px;
+  backdrop-filter: blur(12px);
+  background: rgba(26, 20, 16, 0.8);
+  border: 2px solid var(--edge-warm);
+  border-radius: 18px;
+  box-shadow: var(--shadow-sm);
+  z-index: 10;
+}
+
+.cast-badge-wrap span {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-serif);
+  font-style: italic;
+  color: var(--accent);
+}
+
+/* Controls panel at the bottom of the setup screen — visual twin
+   of #controls on the session screen, but hosts the primary CTA
+   (and the tucked-away API URL / error) instead of End. */
+#setup-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--surface);
+  border: 2px solid var(--edge);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
 }
 
 /* Primary CTA — chunky game button */
@@ -294,6 +360,10 @@ body::before {
   flex-direction: column;
   gap: 12px;
   flex: 1;
+  /* Allow the flex children to shrink — without this, the avatar slots
+     reserve their intrinsic aspect-ratio height and push #controls off
+     screen. */
+  min-height: 0;
 }
 
 /* ── Fox Status Bar (game HUD element) ── */
@@ -332,89 +402,108 @@ body::before {
 }
 
 /* ════════════════════════════════════════════
-   Avatar — The Companion Frame
-   Themed "device frame" like a portrait in a cozy game.
+   Avatars — The Companion Stack
+   Two portrait slots stacked vertically. Chrome doesn't let extensions
+   set the side-panel width, so we constrain each slot to its 2:3 shape
+   (via height-derived width) and center it within the stack. When the
+   user drags the panel wide, the avatars stay portrait and gutter
+   appears beside them; header/controls fill the panel either way.
    ════════════════════════════════════════════ */
-#avatar-container {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 2 / 3;
-  background: var(--sunken);
-  border: 3px solid var(--frame);
-  border-radius: 20px;
-  overflow: hidden;
-  box-shadow:
-    var(--shadow-md),
-    inset 0 0 30px rgba(0, 0, 0, 0.3);
-  transition: box-shadow 0.5s, border-color 0.5s;
-}
-
-/* Breathing glow when connected — the companion is "alive" */
-#avatar-container.breathing {
-  animation: companion-breathe 3.5s ease-in-out infinite;
-  border-color: var(--edge-warm);
-}
-
-/* Speaking state — brighter glow */
-#avatar-container.speaking {
-  border-color: var(--accent);
-  box-shadow:
-    var(--shadow-md),
-    0 0 24px var(--accent-glow),
-    inset 0 0 20px rgba(212, 132, 90, 0.05);
-}
-
-#avatar-video {
-  width: 100%;
-  height: 100%;
-}
-
-/* Loading state */
-#avatar-loading {
-  position: absolute;
-  inset: 0;
+#avatars-stack {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 14px;
-  z-index: 10;
-  background: radial-gradient(ellipse at center, var(--surface) 0%, var(--sunken) 100%);
+  gap: 10px;
+  flex: 1;
+  /* Required for the two flex-child slots to actually split the space
+     instead of each claiming its intrinsic (content-derived) height. */
+  min-height: 0;
 }
 
-#avatar-loading p {
-  font-size: 13px;
-  font-family: var(--font-serif);
-  font-style: italic;
-  color: var(--secondary);
-  animation: pulse-text 2.5s ease-in-out infinite;
+.avatar-slot {
+  position: relative;
+  /* Flex hands each slot half the stack's height. `aspect-ratio: 2/3`
+     with `width: auto` then derives width = height × 2/3, so the slot
+     keeps a portrait shape regardless of how wide the panel is dragged.
+     `max-width: 100%` is the safety net for tall+narrow panels where
+     2/3 of the flex-allocated height would exceed the panel width. */
+  flex: 1 1 0;
+  min-height: 0;
+  aspect-ratio: 2 / 3;
+  width: auto;
+  max-width: 100%;
+  background: var(--sunken);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  transition: box-shadow 0.5s, border-color 0.5s;
 }
 
-.spinner {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: 3px solid var(--edge);
-  border-top-color: var(--accent);
-  animation: spin 1s linear infinite;
+/* Breathing glow when connected — the companion is "alive".
+   No border on the slot anymore, so the indication rides purely on
+   box-shadow (see the @keyframes companion-breathe block below). */
+.avatar-slot.breathing {
+  animation: companion-breathe 3.5s ease-in-out infinite;
+}
+
+/* Speaking state — brighter glow on the active speaker only */
+.avatar-slot.speaking {
+  box-shadow:
+    0 0 0 2px var(--accent),
+    0 0 24px var(--accent-glow);
+}
+
+.avatar-slot .avatar-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.6s ease-out;
+}
+
+/* ── Still preview → live video transition ──
+   The preview image sits underneath the (empty) video container, softly
+   pulsing while we wait for the LemonSlice track to connect. Once video
+   attaches, `.video-live` fades the video in over ~600ms and dims the
+   still image to zero — so it reads as the preview "animating into" the
+   live avatar instead of a hard swap. */
+.avatar-slot .avatar-preview {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+  transition: opacity 0.6s ease-out;
+  animation: preview-breathe 3s ease-in-out infinite;
+}
+
+.avatar-slot.video-live .avatar-preview {
+  opacity: 0;
+  animation: none;
+}
+
+.avatar-slot.video-live .avatar-video {
+  opacity: 1;
 }
 
 /* Name badge — game-style nameplate */
-#avatar-badge {
+.avatar-slot .avatar-badge {
   position: absolute;
-  top: 10px;
-  left: 10px;
+  top: 8px;
+  left: 8px;
   backdrop-filter: blur(12px);
   background: rgba(26, 20, 16, 0.8);
-  padding: 4px 12px;
-  border-radius: 20px;
+  padding: 3px 10px;
+  border-radius: 18px;
   border: 2px solid var(--edge-warm);
   z-index: 10;
   box-shadow: var(--shadow-sm);
 }
 
-#avatar-badge span {
-  font-size: 12px;
+.avatar-slot .avatar-badge span {
+  font-size: 11px;
   font-weight: 600;
   font-family: var(--font-serif);
   font-style: italic;
@@ -422,10 +511,10 @@ body::before {
 }
 
 /* ── Reactions container (floating particles) ── */
-#reactions {
+.avatar-slot .reactions {
   position: absolute;
-  bottom: 60px;
-  right: 12px;
+  bottom: 50px;
+  right: 10px;
   z-index: 15;
   pointer-events: none;
 }
@@ -441,13 +530,15 @@ body::before {
 
 /* ════════════════════════════════════════════
    Captions — Game Dialogue Speech Bubbles
+   Each avatar slot owns its own captions stack so the bubble visually
+   anchors to the speaker, not floating in shared space.
    ════════════════════════════════════════════ */
-#captions {
+.avatar-slot .captions {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 14px;
+  padding: 10px;
   z-index: 10;
   pointer-events: none;
   min-height: 0;
@@ -456,16 +547,16 @@ body::before {
   gap: 4px;
 }
 
-#captions:empty { display: none; }
+.avatar-slot .captions:empty { display: none; }
 
 /* Each caption is a speech bubble */
-#captions .speech-bubble {
+.avatar-slot .captions .speech-bubble {
   background: rgba(26, 20, 16, 0.88);
   backdrop-filter: blur(10px);
   border: 1.5px solid var(--edge);
   border-radius: 14px 14px 14px 4px;
-  padding: 8px 12px;
-  font-size: 12px;
+  padding: 6px 10px;
+  font-size: 11px;
   line-height: 1.45;
   color: rgba(242, 232, 220, 0.5);
   transition: all 0.3s;
@@ -473,7 +564,7 @@ body::before {
   box-shadow: var(--shadow-sm);
 }
 
-#captions .speech-bubble:last-child {
+.avatar-slot .captions .speech-bubble:last-child {
   color: var(--warm);
   border-color: var(--edge-warm);
   background: rgba(26, 20, 16, 0.92);
@@ -481,7 +572,7 @@ body::before {
 }
 
 /* Speech bubble tail on the latest message */
-#captions .speech-bubble:last-child::after {
+.avatar-slot .captions .speech-bubble:last-child::after {
   content: "";
   position: absolute;
   bottom: -6px;
@@ -538,6 +629,13 @@ body::before {
 /* ════════════════════════════════════════════
    Animations
    ════════════════════════════════════════════ */
+
+/* Subtle preview breathing — signals "waiting for the avatar" without a
+   spinner. Gentle brightness pulse reads as alive rather than loading. */
+@keyframes preview-breathe {
+  0%, 100% { filter: brightness(0.85) saturate(0.9); }
+  50%      { filter: brightness(1.0)  saturate(1.05); }
+}
 
 /* Companion frame breathing glow */
 @keyframes companion-breathe {

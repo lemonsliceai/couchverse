@@ -1,151 +1,191 @@
 /**
- * Content script — injected into YouTube watch pages.
+ * Content script — injected into any http(s) page.
  *
- * Monitors the HTML5 <video> element for play/pause/seek events and
- * reports them to the extension runtime (background + side panel).
- * Also extracts video URL and title for session creation.
+ * Watches for the page's primary HTMLMediaElement (<video> or <audio>) and
+ * reports play/pause/seek + URL/title changes to the extension runtime so
+ * the side panel can sync session state and end the session when playback
+ * stops. Designed to work on any streaming site, not just YouTube.
  */
 
 (function () {
   "use strict";
 
-  let video = null;
-  let observer = null;
-  let lastReportedTime = -1;
+  let media = null;
+  let bodyObserver = null;
+  let urlObserver = null;
+  let lastUrl = location.href;
 
   function init() {
-    video = document.querySelector("video");
-    if (!video) {
-      // YouTube SPA — video element may not exist yet. Observe DOM.
-      observer = new MutationObserver(() => {
-        video = document.querySelector("video");
-        if (video) {
-          observer.disconnect();
-          observer = null;
+    findMedia();
+    if (!media) {
+      // Page may load its player asynchronously (SPAs, lazy-mounted iframes,
+      // etc.). Watch the DOM until a media element appears.
+      bodyObserver = new MutationObserver(() => {
+        if (media && document.contains(media)) return;
+        findMedia();
+        if (media) {
+          bodyObserver.disconnect();
+          bodyObserver = null;
           attachListeners();
         }
       });
-      observer.observe(document.body, { childList: true, subtree: true });
+      bodyObserver.observe(document.body, { childList: true, subtree: true });
+      // Even without a media element, surface the page metadata so the side
+      // panel can still allow tab-audio capture (some sites use Web Audio
+      // without an HTMLMediaElement).
+      sendVideoInfo();
+      startUrlObserver();
       return;
     }
     attachListeners();
   }
 
+  function findMedia() {
+    // Prefer the largest visible <video>; fall back to any <video>, then to
+    // <audio>. Many sites have hidden preview/ad videos in the DOM, so
+    // picking the largest avoids latching onto the wrong element.
+    const videos = Array.from(document.querySelectorAll("video"));
+    let best = null;
+    let bestArea = 0;
+    for (const v of videos) {
+      const rect = v.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      if (area > bestArea) {
+        best = v;
+        bestArea = area;
+      }
+    }
+    media = best || videos[0] || document.querySelector("audio") || null;
+  }
+
   function attachListeners() {
-    if (!video) return;
+    if (!media) return;
 
-    video.addEventListener("play", onPlay);
-    video.addEventListener("pause", onPause);
-    video.addEventListener("seeked", onSeeked);
+    media.addEventListener("play", sendStateUpdate);
+    media.addEventListener("pause", sendStateUpdate);
+    media.addEventListener("seeked", sendStateUpdate);
+    media.addEventListener("ended", sendStateUpdate);
 
-    // Report initial state
     sendVideoInfo();
     sendStateUpdate();
 
-    // YouTube is an SPA — detect navigation to new videos
-    let lastUrl = location.href;
-    const urlObserver = new MutationObserver(() => {
-      if (location.href !== lastUrl) {
-        lastUrl = location.href;
-        // Re-find video element (may change on navigation)
-        setTimeout(() => {
-          const newVideo = document.querySelector("video");
-          if (newVideo && newVideo !== video) {
-            video.removeEventListener("play", onPlay);
-            video.removeEventListener("pause", onPause);
-            video.removeEventListener("seeked", onSeeked);
-            video = newVideo;
-            video.addEventListener("play", onPlay);
-            video.addEventListener("pause", onPause);
-            video.addEventListener("seeked", onSeeked);
-          }
-          sendVideoInfo();
-          sendStateUpdate();
-        }, 1000);
-      }
+    startUrlObserver();
+  }
+
+  function startUrlObserver() {
+    if (urlObserver) return;
+    // SPAs (YouTube, Spotify, etc.) navigate without a full reload. Re-bind
+    // to the new media element when the URL changes.
+    urlObserver = new MutationObserver(() => {
+      if (location.href === lastUrl) return;
+      lastUrl = location.href;
+      setTimeout(rebindMedia, 800);
     });
     urlObserver.observe(document.body, { childList: true, subtree: true });
   }
 
-  function onPlay() {
-    sendStateUpdate();
-  }
-
-  function onPause() {
-    sendStateUpdate();
-  }
-
-  function onSeeked() {
+  function rebindMedia() {
+    const previous = media;
+    findMedia();
+    if (media && media !== previous) {
+      if (previous) {
+        previous.removeEventListener("play", sendStateUpdate);
+        previous.removeEventListener("pause", sendStateUpdate);
+        previous.removeEventListener("seeked", sendStateUpdate);
+        previous.removeEventListener("ended", sendStateUpdate);
+      }
+      media.addEventListener("play", sendStateUpdate);
+      media.addEventListener("pause", sendStateUpdate);
+      media.addEventListener("seeked", sendStateUpdate);
+      media.addEventListener("ended", sendStateUpdate);
+    }
+    sendVideoInfo();
     sendStateUpdate();
   }
 
   function sendVideoInfo() {
     const info = {
-      type: "yt-video-info",
+      type: "media-video-info",
       url: location.href,
-      title: getVideoTitle(),
-      videoId: getVideoId(),
+      title: getMediaTitle(),
+      hasMedia: !!media,
     };
     chrome.runtime.sendMessage(info).catch(() => {});
   }
 
   function sendStateUpdate() {
-    if (!video) return;
-    const time = video.currentTime;
-    const playing = !video.paused;
+    if (!media) {
+      chrome.runtime.sendMessage({
+        type: "media-state-update",
+        playing: false,
+        time: 0,
+        duration: 0,
+      }).catch(() => {});
+      return;
+    }
     const msg = {
-      type: "yt-state-update",
-      playing,
-      time,
-      duration: video.duration || 0,
+      type: "media-state-update",
+      playing: !media.paused && !media.ended,
+      time: media.currentTime || 0,
+      duration: isFinite(media.duration) ? media.duration : 0,
     };
     chrome.runtime.sendMessage(msg).catch(() => {});
-    lastReportedTime = time;
   }
 
-  function getVideoTitle() {
-    // YouTube renders the title in an h1 inside #above-the-fold
-    const h1 = document.querySelector(
+  function getMediaTitle() {
+    // YouTube watch + shorts: the title lives in a known element. Falling
+    // back to document.title catches everything else — most sites surface
+    // the media title in <title> already.
+    const ytWatch = document.querySelector(
       "#above-the-fold h1.ytd-watch-metadata yt-formatted-string"
     );
-    if (h1) return h1.textContent.trim();
-    // Fallback
-    return document.title.replace(" - YouTube", "").trim();
+    if (ytWatch) return ytWatch.textContent.trim();
+
+    const ytShortsTitle = document.querySelector(
+      "ytd-reel-video-renderer[is-active] yt-shorts-video-title-view-model, " +
+      "ytd-reel-video-renderer[is-active] h2"
+    );
+    if (ytShortsTitle) return ytShortsTitle.textContent.trim();
+
+    // Open Graph title is the convention many media sites follow.
+    const og = document.querySelector('meta[property="og:title"]');
+    if (og?.content) return og.content.trim();
+
+    return (document.title || location.hostname || "").trim();
   }
 
-  function getVideoId() {
-    const params = new URLSearchParams(location.search);
-    return params.get("v") || "";
-  }
-
-  // Listen for messages from side panel (via background or direct)
+  // Direct queries from the side panel (faster than polling the cache).
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "get-video-info") {
       sendResponse({
-        type: "yt-video-info",
+        type: "media-video-info",
         url: location.href,
-        title: getVideoTitle(),
-        videoId: getVideoId(),
+        title: getMediaTitle(),
+        hasMedia: !!media,
       });
       return false;
     }
 
     if (msg.type === "get-video-state") {
-      if (!video) {
-        sendResponse({ type: "yt-state-update", playing: false, time: 0, duration: 0 });
+      if (!media) {
+        sendResponse({
+          type: "media-state-update",
+          playing: false,
+          time: 0,
+          duration: 0,
+        });
       } else {
         sendResponse({
-          type: "yt-state-update",
-          playing: !video.paused,
-          time: video.currentTime,
-          duration: video.duration || 0,
+          type: "media-state-update",
+          playing: !media.paused && !media.ended,
+          time: media.currentTime || 0,
+          duration: isFinite(media.duration) ? media.duration : 0,
         });
       }
       return false;
     }
   });
 
-  // Run on load
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
   } else {

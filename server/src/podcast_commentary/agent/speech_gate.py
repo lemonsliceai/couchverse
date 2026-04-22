@@ -23,16 +23,22 @@ logger = logging.getLogger("podcast-commentary.speech_gate")
 
 
 class SpeechGate:
-    """Single source of truth for Fox's speaking state."""
+    """Single source of truth for one persona's speaking state.
+
+    With multiple personas in the room, each owns its own gate keyed by
+    ``name`` so log lines stay disambiguated (``[fox]`` vs ``[alien]``).
+    """
 
     def __init__(
         self,
         session: AgentSession,
         on_released: Callable[[], None] | None = None,
+        name: str = "",
     ) -> None:
         self._session = session
         self._current: SpeechHandle | None = None
         self._on_released = on_released
+        self._name = name or "speaker"
 
     # ------------------------------------------------------------------
     # Read-only state
@@ -83,7 +89,8 @@ class SpeechGate:
         should be able to cut him off with a fresh hold-to-talk.
         """
         logger.info(
-            "=== FOX SPEAK PROMPT ===\n%s\n=== END SPEAK PROMPT ===",
+            "=== %s SPEAK PROMPT ===\n%s\n=== END SPEAK PROMPT ===",
+            self._name.upper(),
             prompt,
         )
         handle = self._session.generate_reply(
@@ -125,7 +132,8 @@ class SpeechGate:
         if self._current is handle:
             self._current = None
             logger.info(
-                "Speech handle done (interrupted=%s) — gate released",
+                "%s speech handle done (interrupted=%s) — gate released",
+                self._name,
                 getattr(handle, "interrupted", False),
             )
             if self._on_released is not None:

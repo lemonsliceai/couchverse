@@ -1,23 +1,28 @@
-"""Agent entrypoint — wires up the LiveKit session and dispatches Fox.
+"""Agent entrypoint — wires up N PersonaAgents + a Director per job.
 
 This module is intentionally thin: all conversation behaviour lives in
-`ComedianAgent` and its collaborators (see `comedian.py`, `speech_gate.py`,
-`user_turn.py`, `podcast_pipeline.py`). Here we only:
+``PersonaAgent`` (per-persona) and ``Director`` (room-wide
+orchestration). Here we only:
 
-  * build the `AgentSession` (STT / LLM / TTS / VAD / turn detection)
-  * start the LemonSlice avatar (if one was requested)
-  * construct the `ComedianAgent` and start the session
-  * register a shutdown hook that tears the podcast pipeline down
+  * parse the job metadata (which personas + per-persona avatar URLs)
+  * for each persona, build an ``AgentSession`` (STT / LLM / TTS / VAD /
+    turn detection from the persona's own ``FoxConfig``)
+  * start the LemonSlice avatar with a *unique* participant identity per
+    persona so multiple avatars can coexist in the room
+  * construct the ``Director``, hand it the personas + the primary
+    AgentSession, and wait for both personas' ``ready`` events before
+    delivering coordinated intros
 
-Splitting these concerns out of the agent itself keeps the composition root
-small enough to reason about, and lets the agent class stay focused on
-commentary behaviour rather than server plumbing.
+Only the *primary* persona (first in ``PERSONAS``) consumes the user
+microphone. Secondary personas set ``audio_input=False`` so we don't run
+STT twice on the same audio.
 """
 
 import asyncio
 import json
 import logging
 import time
+from typing import Any
 
 from dotenv import load_dotenv
 from livekit.agents import (
@@ -31,9 +36,9 @@ from livekit.agents import (
 from livekit.plugins import elevenlabs, groq, lemonslice, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
-from podcast_commentary.agent.comedian import ComedianAgent
-from podcast_commentary.agent.fox_config import CONFIG
-from podcast_commentary.agent.prompts import COMEDIAN_SYSTEM_PROMPT
+from podcast_commentary.agent.comedian import PersonaAgent
+from podcast_commentary.agent.director import Director
+from podcast_commentary.agent.fox_config import FoxConfig, load_config
 from podcast_commentary.core.config import settings
 
 logger = logging.getLogger("podcast-commentary.agent")
@@ -46,10 +51,13 @@ server = AgentServer(num_idle_processes=2)
 
 
 def prewarm(proc: JobProcess) -> None:
-    """Preload Silero VAD so the first session doesn't pay the cost."""
-    proc.userdata["vad"] = silero.VAD.load(
-        activation_threshold=CONFIG.vad.activation_threshold,
-    )
+    """Preload Silero VAD once per worker process.
+
+    All personas in a job share this single VAD instance — Silero is
+    stateless across calls, so sharing is safe and saves the ~80 MB
+    per-instance model load.
+    """
+    proc.userdata["vad"] = silero.VAD.load(activation_threshold=0.5)
 
 
 server.setup_fnc = prewarm
@@ -65,33 +73,54 @@ def _parse_job_metadata(ctx: JobContext) -> dict:
         return {}
 
 
-def _build_session(vad) -> AgentSession:
-    """Assemble the AgentSession with STT / LLM / TTS / turn detection.
+def _resolve_personas(metadata: dict) -> list[dict[str, str]]:
+    """Return the persona descriptors (name + avatar_url) for this job.
+
+    The API server includes a ``personas`` list in metadata. We fall back
+    to building one from ``settings.PERSONAS`` and each preset's own
+    ``AvatarConfig.avatar_url`` so a stale API still functions during a
+    rolling deploy.
+    """
+    personas = metadata.get("personas")
+    if isinstance(personas, list) and personas:
+        return personas
+
+    descriptors: list[dict[str, str]] = []
+    for name in (settings.PERSONAS or settings.FOX_CONFIG or "default").split(","):
+        name = name.strip()
+        if not name:
+            continue
+        cfg = load_config(name)
+        descriptors.append({"name": name, "label": name, "avatar_url": cfg.avatar.avatar_url})
+    return descriptors
+
+
+def _build_session(config: FoxConfig, vad: Any) -> AgentSession:
+    """Build one AgentSession from a persona's FoxConfig.
 
     Notes:
-      * `preemptive_generation=False` — we control exactly when Fox
-        speaks; no speculative generation.
-      * `resume_false_interruption=False` — the avatar path sets
-        `audio_output=False`, whose audio sink doesn't implement
-        `.can_pause`; resume would log a warning and no-op.
-      * Session-level `allow_interruptions` stays at its default (True).
-        Setting it False globally broke the intro via the LemonSlice
-        avatar (the aec-warmup path stalls when interruptions are off).
-        We enforce non-interruption per-turn via `SpeechGate.speak`.
+      * ``preemptive_generation=False`` — we control exactly when each
+        persona speaks; no speculative generation.
+      * ``resume_false_interruption=False`` — the avatar path sets
+        ``audio_output=False``, whose audio sink doesn't implement
+        ``.can_pause``; resume would log a warning and no-op.
+      * Session-level ``allow_interruptions`` stays at its default
+        (True). Per-turn we enforce non-interruption via
+        ``SpeechGate.speak``.
     """
     return AgentSession(
-        stt=groq.STT(model=CONFIG.stt.model),
+        stt=groq.STT(model=config.stt.model),
         llm=groq.LLM(
-            model=CONFIG.llm.model,
-            max_completion_tokens=CONFIG.llm.max_tokens,
+            model=config.llm.model,
+            max_completion_tokens=config.llm.max_tokens,
         ),
         tts=elevenlabs.TTS(
-            model=CONFIG.tts.model,
-            voice_id=CONFIG.tts.voice_id,
+            model=config.tts.model,
+            voice_id=config.tts.voice_id,
             voice_settings=elevenlabs.VoiceSettings(
-                stability=CONFIG.tts.stability,
-                similarity_boost=CONFIG.tts.similarity_boost,
-                speed=CONFIG.tts.speed,
+                stability=config.tts.stability,
+                similarity_boost=config.tts.similarity_boost,
+                speed=config.tts.speed,
             ),
         ),
         turn_detection=MultilingualModel(),
@@ -101,36 +130,49 @@ def _build_session(vad) -> AgentSession:
     )
 
 
-async def _start_avatar(metadata: dict, session: AgentSession, ctx: JobContext) -> str | None:
-    """Start the LemonSlice avatar if one was configured."""
-    avatar_url = metadata.get("avatar_url")
+async def _start_avatar(
+    *,
+    config: FoxConfig,
+    avatar_url: str | None,
+    session: AgentSession,
+    ctx: JobContext,
+    identity: str,
+) -> str | None:
+    """Start the LemonSlice avatar for one persona under a unique identity.
+
+    Returns the avatar session id (LemonSlice's internal handle) on
+    success, or None if no avatar was configured / startup failed. We
+    swallow startup failures so a single broken avatar doesn't kill the
+    whole show — the persona can still speak audio-only.
+    """
     if not avatar_url:
-        logger.info("No avatar_url — skipping avatar")
+        logger.info("[%s] No avatar_url — skipping avatar", config.name)
         return None
 
     avatar = lemonslice.AvatarSession(
         agent_image_url=avatar_url,
-        agent_prompt=CONFIG.avatar.active_prompt,
-        agent_idle_prompt=CONFIG.avatar.idle_prompt,
+        agent_prompt=config.avatar.active_prompt,
+        agent_idle_prompt=config.avatar.idle_prompt,
+        avatar_participant_identity=identity,
     )
     try:
         t0 = time.perf_counter()
         session_id = await avatar.start(session, room=ctx.room)
-        logger.info("Avatar started in %.2fs", time.perf_counter() - t0)
+        logger.info("[%s] Avatar started in %.2fs", config.name, time.perf_counter() - t0)
         return session_id
     except Exception:
-        logger.warning("Avatar failed to start — continuing audio only", exc_info=True)
+        logger.warning(
+            "[%s] Avatar failed to start — continuing audio only",
+            config.name,
+            exc_info=True,
+        )
         return None
 
 
-async def _wait_for_avatar_participant(
-    room,
-    timeout: float = CONFIG.avatar.startup_timeout_s,
-) -> bool:
-    identity = "lemonslice-avatar-agent"
+async def _wait_for_avatar_participant(room: Any, identity: str, timeout: float) -> bool:
     ready = asyncio.Event()
 
-    def _on_participant(participant):
+    def _on_participant(participant: Any) -> None:
         if participant.identity == identity:
             ready.set()
 
@@ -145,48 +187,107 @@ async def _wait_for_avatar_participant(
         await asyncio.wait_for(ready.wait(), timeout=timeout)
         return True
     except TimeoutError:
-        logger.warning("Avatar participant did not connect within %.0fs", timeout)
+        logger.warning("Avatar %s did not connect within %.0fs", identity, timeout)
         return False
+
+
+def _avatar_identity_for(persona_name: str) -> str:
+    """Per-persona avatar participant identity.
+
+    Each LemonSlice instance must publish under a unique identity or
+    LiveKit treats them as the same participant and only one set of
+    tracks survives. The Chrome extension routes incoming tracks by
+    matching this prefix — see ``sidepanel.js``.
+    """
+    return f"lemonslice-avatar-{persona_name}"
 
 
 @server.rtc_session(agent_name=settings.AGENT_NAME)
 async def entrypoint(ctx: JobContext) -> None:
     """Per-job entrypoint — called by the LiveKit agent worker."""
     metadata = _parse_job_metadata(ctx)
+    persona_descriptors = _resolve_personas(metadata)
+    if not persona_descriptors:
+        logger.error("No personas resolved for job — aborting")
+        return
 
-    # Connect to the room BEFORE session.start() so `local_participant` is
-    # usable inside `on_enter` (otherwise publish_data raises "cannot access
-    # local participant before connecting").
+    # Connect BEFORE starting any session so local_participant is usable
+    # inside Director.start() (publish_data needs it).
     await ctx.connect()
 
-    session = _build_session(vad=ctx.proc.userdata["vad"])
-    avatar_session_id = await _start_avatar(metadata, session, ctx)
+    vad = ctx.proc.userdata["vad"]
+    session_id = metadata.get("session_id")
 
-    logger.info(
-        "=== FOX SYSTEM PROMPT ===\n%s\n=== END SYSTEM PROMPT ===",
-        COMEDIAN_SYSTEM_PROMPT,
-    )
+    sessions: list[AgentSession] = []
+    personas: list[PersonaAgent] = []
+    avatar_identities: list[str] = []
 
-    agent = ComedianAgent(
-        instructions=COMEDIAN_SYSTEM_PROMPT,
-        # Supplied by the API server when the session row is created. Used
-        # to thread every turn (podcast / user / agent) + the rolling
-        # summary into the conversation_messages table.
-        session_id=metadata.get("session_id"),
-    )
+    # Build each persona + its session + its avatar. The first persona
+    # in the list is the *primary* — it owns user-mic STT.
+    for idx, descriptor in enumerate(persona_descriptors):
+        name = descriptor["name"]
+        avatar_url = descriptor.get("avatar_url")
+        config = load_config(name)
 
-    await session.start(
-        agent=agent,
+        logger.info(
+            "[%s] === SYSTEM PROMPT ===\n%s\n=== END SYSTEM PROMPT ===",
+            name,
+            config.persona.system_prompt,
+        )
+
+        session = _build_session(config, vad=vad)
+        sessions.append(session)
+
+        identity = _avatar_identity_for(name)
+        avatar_identities.append(identity)
+        await _start_avatar(
+            config=config,
+            avatar_url=avatar_url,
+            session=session,
+            ctx=ctx,
+            identity=identity,
+        )
+
+        persona = PersonaAgent(config=config, session_id=session_id)
+        personas.append(persona)
+
+        # Only the primary owns the user mic — secondaries skip audio_input
+        # so we don't run STT twice on the same MediaStreamTrack.
+        is_primary = idx == 0
+        await session.start(
+            agent=persona,
+            room=ctx.room,
+            room_options=room_io.RoomOptions(
+                audio_input=True if is_primary else False,
+                # Avatar audio is routed through LemonSlice — disable the
+                # session's own audio output so it doesn't double-publish.
+                audio_output=False,
+            ),
+        )
+
+    # Wait for every persona's on_enter to compose its SpeechGate.
+    await asyncio.gather(*(p.ready.wait() for p in personas))
+
+    # Director takes over: intros, speaker selection, user PTT routing.
+    director = Director(
+        personas=personas,
         room=ctx.room,
-        room_options=room_io.RoomOptions(
-            audio_output=False if avatar_session_id else True,
-        ),
+        primary_session=sessions[0],
+        session_id=session_id,
     )
 
-    ctx.add_shutdown_callback(agent.shutdown)
+    # Wait briefly for each avatar participant to actually connect so the
+    # extension has the video tracks rendered before the intro lands.
+    timeout = max(p.config.avatar.startup_timeout_s for p in personas)
+    await asyncio.gather(
+        *(
+            _wait_for_avatar_participant(ctx.room, ident, timeout=timeout)
+            for ident in avatar_identities
+        )
+    )
 
-    if avatar_session_id:
-        await _wait_for_avatar_participant(ctx.room)
+    await director.start()
+    ctx.add_shutdown_callback(director.shutdown)
 
 
 if __name__ == "__main__":

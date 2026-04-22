@@ -10,64 +10,91 @@
   <div id="app">
     <!-- Header -->
     <header id="header">
-      <h1>Watch with <em>Fox</em></h1>
+      <h1>Watch with <em>Fox &amp; Alien</em></h1>
       <div id="status" class="status-dot disconnected">
         <span class="dot"></span>
         <span id="status-text">Offline</span>
       </div>
     </header>
 
-    <!-- Setup screen (shown before session starts) -->
+    <!-- Setup screen (shown before session starts).
+         Mirrors the session screen: status bar at top, stacked 2:3
+         portraits in the middle, controls panel at the bottom. The
+         portraits visually "become" the live avatars once connected,
+         so setup → session reads as the same space animating to life. -->
     <div id="setup-screen">
-      <div id="video-preview">
-        <div id="thumbnail-frame">
-          <!-- Fox portrait — the setup-screen preview IS Fox, not the video.
-               It visually "becomes" the avatar once the session starts. -->
-          <img id="thumbnail" src="icons/fox_2x3.jpg" alt="Fox" />
+      <div id="setup-status">
+        <span class="status-icon">&#x1F3AC;</span>
+        <span id="video-title" class="status-mood">Detecting video...</span>
+      </div>
+
+      <div id="cast-stack">
+        <div class="cast-portrait">
+          <img src="icons/fox_2x3.jpg" alt="Fox" />
+          <div class="cast-badge-wrap"><span>Fox</span></div>
         </div>
-        <p id="video-title" class="video-title">Detecting video...</p>
+        <div class="cast-portrait">
+          <img src="icons/alien_2x3.jpg" alt="Alien" />
+          <div class="cast-badge-wrap"><span>Alien</span></div>
+        </div>
       </div>
-      <button id="start-btn" class="btn-primary" disabled>
-        Watch with Fox
-      </button>
-      <div id="settings-row">
-        <label>
-          API URL
-          <input id="api-url" type="text" spellcheck="false" />
-        </label>
+
+      <div id="setup-controls">
+        <button id="start-btn" class="btn-primary" disabled>
+          Watch with Fox &amp; Alien
+        </button>
+        <div id="settings-row">
+          <label>
+            API URL
+            <input id="api-url" type="text" spellcheck="false" />
+          </label>
+        </div>
+        <p id="setup-error" class="error hidden"></p>
       </div>
-      <p id="setup-error" class="error hidden"></p>
     </div>
 
     <!-- Session screen (shown after connection) -->
     <div id="session-screen" class="hidden">
 
-      <!-- Fox Status Bar — game HUD element -->
+      <!-- Status Bar — game HUD element -->
       <div id="fox-status">
         <span class="status-icon" id="fox-status-icon">&#x1F98A;</span>
-        <span class="status-label">Fox</span>
+        <span class="status-label" id="status-speaker">The Couch</span>
         <span class="status-mood" id="fox-mood">Joining...</span>
       </div>
 
-      <!-- Avatar — The Companion Frame -->
-      <div id="avatar-container">
-        <div id="avatar-loading">
-          <div class="spinner"></div>
-          <p>Fox is joining...</p>
-        </div>
-        <div id="avatar-video"></div>
-        <div id="avatar-badge" class="hidden">
-          <span>Fox</span>
+      <!-- Two stacked avatar slots — populated dynamically when each
+           lemonslice-avatar-<name> participant connects. The data-name
+           attribute is the persona name; sidepanel.js routes tracks +
+           speaker-state by matching it.
+
+           Each slot shows a still preview (icons/*_2x3.jpg) until the
+           LiveKit video track attaches, at which point the live avatar
+           fades in over the preview. Keeps the panel visually populated
+           during the ~1-2s avatar boot instead of showing dead space. -->
+      <div id="avatars-stack">
+        <div class="avatar-slot has-preview" data-name="default" data-label="Fox">
+          <img class="avatar-preview" src="icons/fox_2x3.jpg" alt="Fox" />
+          <div class="avatar-video"></div>
+          <div class="avatar-badge">
+            <span>Fox</span>
+          </div>
+          <div class="reactions"></div>
+          <div class="captions"></div>
         </div>
 
-        <!-- Floating reaction particles -->
-        <div id="reactions"></div>
-
-        <!-- Speech bubble captions -->
-        <div id="captions"></div>
+        <div class="avatar-slot has-preview" data-name="chaos_agent" data-label="Alien">
+          <img class="avatar-preview" src="icons/alien_2x3.jpg" alt="Alien" />
+          <div class="avatar-video"></div>
+          <div class="avatar-badge">
+            <span>Alien</span>
+          </div>
+          <div class="reactions"></div>
+          <div class="captions"></div>
+        </div>
       </div>
 
-      <!-- Audio renderer — hidden elements for Fox's voice -->
+      <!-- Audio renderer — hidden elements for the comedians' voices -->
       <div id="audio-container" class="hidden"></div>
 
       <!-- Controls — Game HUD Panel -->

@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from livekit import api
 from pydantic import BaseModel
 
+from podcast_commentary.agent.fox_config import _resolve_persona_names, load_config
 from podcast_commentary.core.config import settings
 from podcast_commentary.core.db import (
     create_session,
@@ -37,11 +38,26 @@ async def create_session_route(request: CreateSessionRequest):
 
     session_id = await create_session(room_name, request.video_url, request.video_title)
 
+    # Each preset declares its own avatar_url in AvatarConfig.
+    personas: list[dict[str, str]] = []
+    for name in _resolve_persona_names():
+        cfg = load_config(name)
+        personas.append(
+            {
+                "name": name,
+                "label": cfg.persona.speaker_label or name,
+                "avatar_url": cfg.avatar.avatar_url,
+            }
+        )
+
     metadata = {
         "session_id": session_id,
         "video_url": request.video_url,
         "video_title": request.video_title or "",
-        "avatar_url": settings.AVATAR_URL,
+        "personas": personas,
+        # Legacy: first persona's avatar_url so old agent workers (single-
+        # avatar code path) keep functioning during a rolling deploy.
+        "avatar_url": personas[0]["avatar_url"] if personas else "",
     }
 
     token = (

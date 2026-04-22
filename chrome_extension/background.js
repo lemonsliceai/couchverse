@@ -3,18 +3,25 @@
  *
  * Responsibilities:
  *   1. Provide tab capture stream IDs to the side panel
- *   2. Enable the side panel on YouTube watch pages
+ *   2. Enable the side panel on any http(s) page
  *   3. Relay messages between content script and side panel
  */
 
-// Enable side panel on YouTube watch pages
+// Enable side panel on any http(s) page. Tab audio capture works on any tab
+// the user can grant access to via the action click, so we don't restrict to
+// a specific site.
+function isCapturablePage(url) {
+  if (!url) return false;
+  return url.startsWith("http://") || url.startsWith("https://");
+}
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!tab.url) return;
-  const isYouTube = tab.url.includes("youtube.com/watch");
+  const enabled = isCapturablePage(tab.url);
   chrome.sidePanel.setOptions({
     tabId,
-    enabled: isYouTube,
-    path: isYouTube ? "sidepanel.html" : undefined,
+    enabled,
+    path: enabled ? "sidepanel.html" : undefined,
   });
 });
 
@@ -37,21 +44,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  // Relay content script messages to side panel (and vice versa)
-  if (msg.type === "yt-state-update" || msg.type === "yt-video-info") {
-    // Forward from content script to side panel — side panel listens via
-    // its own onMessage handler
-    // No explicit forwarding needed; side panel calls chrome.tabs.sendMessage
-    // to reach the content script. Content script messages arrive here and
-    // we can store/forward them.
-    //
-    // For simplicity, store latest state so side panel can poll.
-    if (msg.type === "yt-video-info") {
-      latestVideoInfo[sender.tab?.id] = msg;
-    }
-    if (msg.type === "yt-state-update") {
-      latestVideoState[sender.tab?.id] = msg;
-    }
+  // Cache the most recent media info / state from each content script so the
+  // side panel can poll without round-tripping into the page.
+  if (msg.type === "media-video-info") {
+    latestVideoInfo[sender.tab?.id] = msg;
+  }
+  if (msg.type === "media-state-update") {
+    latestVideoState[sender.tab?.id] = msg;
   }
 
   if (msg.type === "get-video-info") {
@@ -67,7 +66,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-// In-memory cache for video info from content scripts
 const latestVideoInfo = {};
 const latestVideoState = {};
 
@@ -80,7 +78,6 @@ const latestVideoState = {};
 function handleTabCapture(tabId, sendResponse) {
   const targetTabId = tabId || undefined;
 
-  // If a specific tab ID was given, use it. Otherwise capture the active tab.
   if (targetTabId) {
     captureTab(targetTabId, sendResponse);
   } else {

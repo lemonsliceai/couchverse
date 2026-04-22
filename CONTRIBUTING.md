@@ -4,23 +4,37 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ## Development Setup
 
-See [README.md](README.md#getting-started) for full setup instructions. In short:
+See [README.md](README.md#quick-start) for full setup instructions. In short:
 
 ```bash
-cd server && uv sync && uv run python src/podcast_commentary/agent/main.py download-files
-cd ../web && npm install
+# Server (Python 3.11+, uv)
+cd server
+uv sync
+uv run python src/podcast_commentary/agent/main.py download-files
+cp .env.example .env       # fill in your API keys
+
+# Chrome extension
+cd ../chrome_extension
+npm install && npm run build
 ```
 
-Then run three terminals: API server, agent, and web app.
+Then run two terminals and load the extension:
+
+1. **API server** — `uv run uvicorn podcast_commentary.api.app:app --host 0.0.0.0 --port 8080 --reload`
+2. **Agent worker** — `uv run python src/podcast_commentary/agent/main.py dev`
+3. **Extension** — `chrome://extensions` → Developer mode → Load unpacked → select `chrome_extension/`
+
+See [`server/README.md`](server/README.md) and [`chrome_extension/README.md`](chrome_extension/README.md) for deeper dives.
 
 ## Making Changes
 
 1. Fork the repo and create a branch from `main`.
 2. Make your changes. Follow the existing code style:
    - **Python:** Ruff, 100-char line length, full type annotations (Python 3.11+ `X | Y` syntax).
-   - **TypeScript:** ESLint with Next.js config, strict mode, `@/` imports.
-3. Test your changes locally (all three services running).
-4. Open a pull request against `main`.
+   - **JavaScript (extension):** Plain ES modules bundled via esbuild. No TypeScript, no framework.
+3. Test locally end-to-end: API + agent running, extension loaded, a real YouTube video open.
+4. For Python changes, run `uv run ruff check src/` and `uv run ruff format --check src/` before pushing.
+5. Open a pull request against `main`.
 
 ## Pull Requests
 

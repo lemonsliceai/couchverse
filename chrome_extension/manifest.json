@@ -2,17 +2,17 @@
   "manifest_version": 3,
   "name": "Watch with Fox",
   "version": "1.0.0",
-  "description": "AI comedian companion that watches YouTube with you",
+  "description": "AI comedian companion that watches and listens to any streaming video or audio with you",
   "permissions": [
     "tabCapture",
     "activeTab",
     "scripting",
     "sidePanel",
-    "storage"
+    "storage",
+    "tabs"
   ],
   "host_permissions": [
-    "https://www.youtube.com/*",
-    "https://youtube.com/*"
+    "<all_urls>"
   ],
   "side_panel": {
     "default_path": "sidepanel.html"
@@ -22,12 +22,10 @@
   },
   "content_scripts": [
     {
-      "matches": [
-        "https://www.youtube.com/watch*",
-        "https://youtube.com/watch*"
-      ],
+      "matches": ["http://*/*", "https://*/*"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "action": {
@@ -41,7 +39,7 @@
   "web_accessible_resources": [
     {
       "resources": ["icons/*"],
-      "matches": ["https://www.youtube.com/*"]
+      "matches": ["<all_urls>"]
     }
   ]
 }

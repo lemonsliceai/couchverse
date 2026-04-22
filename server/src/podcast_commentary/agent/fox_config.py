@@ -42,6 +42,10 @@ class PersonaConfig:
     angle_lookback: int
     commentary_cta: str
     user_reply_cta: str
+    # Display name shown to the audience and used by the Director's
+    # speaker-selection LLM (e.g. "Fox", "Alien"). Falls back to the
+    # config's ``name`` field when empty.
+    speaker_label: str = ""
 
 
 @dataclass(frozen=True)
@@ -97,6 +101,10 @@ class AvatarConfig:
     active_prompt: str
     idle_prompt: str
     startup_timeout_s: float
+    # Publicly reachable URL for this persona's avatar image. LemonSlice
+    # Cloud fetches it from its servers, so ``localhost`` is rejected —
+    # use the deployed Fly.io host or an ngrok tunnel during dev.
+    avatar_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -160,26 +168,48 @@ class FoxConfig:
 _PRESET_PACKAGE = "podcast_commentary.agent.fox_configs"
 
 
-def load_active_config() -> FoxConfig:
-    """Import ``fox_configs.<FOX_CONFIG>`` and return its ``CONFIG`` export."""
-    name = (settings.FOX_CONFIG or "default").strip()
+def load_config(name: str) -> FoxConfig:
+    """Import ``fox_configs.<name>`` and return its ``CONFIG`` export."""
+    name = name.strip()
     module_path = f"{_PRESET_PACKAGE}.{name}"
     try:
         module = importlib.import_module(module_path)
     except ModuleNotFoundError as exc:
         raise RuntimeError(
-            f"FOX_CONFIG={name!r} does not resolve to a preset — expected "
+            f"persona {name!r} does not resolve to a preset — expected "
             f"server/src/podcast_commentary/agent/fox_configs/{name}.py"
         ) from exc
 
     cfg = getattr(module, "CONFIG", None)
     if not isinstance(cfg, FoxConfig):
         raise RuntimeError(f"{module_path} must export a top-level `CONFIG: FoxConfig`")
-    logger.info("Loaded FoxConfig preset %r (FOX_CONFIG=%s)", cfg.name, name)
+    logger.info("Loaded FoxConfig preset %r", cfg.name)
     return cfg
 
 
+def _resolve_persona_names() -> list[str]:
+    """Return the persona names to load, in order.
+
+    ``PERSONAS`` (comma-separated) wins. Falls back to the legacy single
+    ``FOX_CONFIG`` value so older deployments keep working unchanged.
+    """
+    raw = (settings.PERSONAS or settings.FOX_CONFIG or "default").strip()
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    return names or ["default"]
+
+
+def load_active_configs() -> list[FoxConfig]:
+    """Load every persona named in ``PERSONAS`` (or ``FOX_CONFIG``)."""
+    return [load_config(n) for n in _resolve_persona_names()]
+
+
+def load_active_config() -> FoxConfig:
+    """First persona only — kept for back-compat with the single-Fox path."""
+    return load_active_configs()[0]
+
+
 # Eagerly loaded at import time so downstream modules can read ``CONFIG``
-# as a module-level constant. Presets are selected once per process — to
-# switch, change FOX_CONFIG in server/.env and restart.
+# as a module-level constant. With multiple personas, this is the FIRST
+# (primary) persona; shared modules (CommentaryTimer, FullTranscript,
+# PodcastPipeline) read its timing values to drive global cadence.
 CONFIG: FoxConfig = load_active_config()
