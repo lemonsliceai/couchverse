@@ -95,70 +95,10 @@ body::before {
 }
 
 /* ════════════════════════════════════════════
-   Header
-   ════════════════════════════════════════════ */
-#header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: 10px;
-  border-bottom: 2px solid var(--edge);
-}
-
-#header h1 {
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--warm);
-  letter-spacing: -0.01em;
-}
-
-#header h1 em {
-  font-family: var(--font-serif);
-  color: var(--accent);
-  font-style: italic;
-  font-weight: 500;
-}
-
-/* ── Status indicator ── */
-.status-dot {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 10px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-}
-
-.status-dot .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--muted);
-  transition: all 0.3s;
-}
-
-.status-dot.connected .dot {
-  background: var(--online);
-  box-shadow: 0 0 8px rgba(107, 203, 119, 0.4);
-}
-.status-dot.connected { color: var(--online); }
-
-.status-dot.connecting .dot {
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent-glow);
-  animation: pulse-glow 1.5s ease-in-out infinite;
-}
-.status-dot.connecting { color: var(--accent); }
-
-.status-dot.disconnected .dot { background: var(--muted); }
-
-/* ════════════════════════════════════════════
    Setup Screen — mirrors the session screen's vertical rhythm
-   (status bar → stacked portraits → controls panel) so the
-   transition from setup to live avatars feels like the same
-   space animating rather than a layout swap.
+   (stacked portraits → controls panel) so the transition from
+   setup to live avatars feels like the same space animating
+   rather than a layout swap.
    ════════════════════════════════════════════ */
 #setup-screen {
   display: flex;
@@ -166,33 +106,6 @@ body::before {
   gap: 12px;
   flex: 1;
   min-height: 0;
-}
-
-/* Video-title status bar — visual twin of #fox-status. */
-#setup-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: var(--surface);
-  border: 2px solid var(--edge);
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  color: var(--secondary);
-}
-
-#setup-status .status-icon {
-  font-size: 14px;
-  line-height: 1;
-}
-
-#setup-status .status-mood {
-  flex: 1;
-  color: var(--secondary);
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* Fox + Alien stacked vertically — same sizing rules as
@@ -304,42 +217,6 @@ body::before {
   animation: pulse-glow 2s ease-in-out infinite;
 }
 
-/* Settings — subtle, tucked away */
-#settings-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-#settings-row label {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 10px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-}
-
-#settings-row input {
-  padding: 7px 10px;
-  font-size: 12px;
-  font-family: var(--font-sans);
-  background: var(--sunken);
-  color: var(--secondary);
-  border: 2px solid var(--edge);
-  border-radius: var(--radius-sm);
-  outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-#settings-row input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-  color: var(--warm);
-}
-
 .error {
   font-size: 12px;
   font-weight: 500;
@@ -364,41 +241,6 @@ body::before {
      reserve their intrinsic aspect-ratio height and push #controls off
      screen. */
   min-height: 0;
-}
-
-/* ── Fox Status Bar (game HUD element) ── */
-#fox-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: var(--surface);
-  border: 2px solid var(--edge);
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  color: var(--secondary);
-}
-
-#fox-status .status-icon {
-  font-size: 14px;
-  line-height: 1;
-}
-
-#fox-status .status-label {
-  font-family: var(--font-serif);
-  font-style: italic;
-  color: var(--accent);
-  font-weight: 500;
-}
-
-#fox-status .status-mood {
-  flex: 1;
-  text-align: right;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 /* ════════════════════════════════════════════
@@ -600,6 +442,114 @@ body::before {
   box-shadow: var(--shadow-sm);
 }
 
+/* ── Pacing disclosure ──
+   The two dials live behind a native <details> so they default closed
+   and the avatars get the height back. Summary row reads as a slim
+   tab with a chevron that rotates on open. */
+#pacing-disclosure > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 4px 4px 2px;
+  user-select: none;
+}
+
+#pacing-disclosure > summary::-webkit-details-marker { display: none; }
+
+.disclosure-label {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.disclosure-chevron {
+  font-size: 14px;
+  line-height: 1;
+  color: var(--secondary);
+  transition: transform 0.2s ease;
+}
+
+#pacing-disclosure[open] > summary .disclosure-chevron {
+  transform: rotate(180deg);
+}
+
+.disclosure-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+}
+
+/* ── Pacing dials (chattiness / reply length) ──
+   Segmented control: three-button pill where the active value sits in
+   accent, the inactive ones fade back. Stacked label + hint above the
+   segments so the dial reads as a labeled knob, not a raw button row. */
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.control-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.control-title {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+}
+
+.control-hint {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.segmented {
+  display: flex;
+  background: var(--sunken);
+  border: 2px solid var(--edge);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+
+.seg-btn {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--secondary);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 4px);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s, box-shadow 0.15s;
+  font-family: var(--font-sans);
+}
+
+.seg-btn:hover:not(.is-active) {
+  color: var(--warm);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.seg-btn.is-active {
+  color: var(--deep);
+  background: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+
 /* ── Action buttons ── */
 .control-actions {
   display: flex;
@@ -624,6 +574,39 @@ body::before {
   background: rgba(232, 90, 90, 0.14);
   border-color: rgba(232, 90, 90, 0.3);
   transform: translateY(-1px);
+}
+
+/* Skip commentary — lights up (accent-tinted) only while a persona
+   is mid-utterance; otherwise sits dim and disabled. */
+.btn-skip {
+  flex: 1;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 2px solid rgba(212, 132, 90, 0.25);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-skip:hover:not(:disabled) {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+.btn-skip:active:not(:disabled) {
+  transform: translateY(0) scale(0.98);
+}
+
+.btn-skip:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  color: var(--muted);
+  background: transparent;
+  border-color: var(--edge);
 }
 
 /* ════════════════════════════════════════════

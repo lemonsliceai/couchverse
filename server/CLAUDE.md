@@ -51,7 +51,7 @@ ComedianAgent uses a `FoxPhase` enum: INTRO → LISTENING → COMMENTATING → U
 ## Gotchas
 
 - **Fire-and-forget tasks:** Never use bare `asyncio.create_task()`. Use `_fire_and_forget()` which attaches a done-callback to surface exceptions.
-- **Speech handle timeouts:** LemonSlice avatar can hang on `playback_finished` RPC. Always use `INTRO_PLAYOUT_TIMEOUT` (15s) and `COMMENTARY_PLAYOUT_TIMEOUT` (20s) when waiting on speech handles.
+- **Speech handle timeouts:** LemonSlice's *second* avatar in a multi-avatar room is unreliable about sending `lk.playback_finished` back — see livekit/agents #3510 and #4315 (running >1 `AvatarSession` in one room is explicitly unsupported). `SpeechHandle.wait_for_playout` will hang forever when the RPC is missing. Always wait via `Director._wait_for_playout_robust`, which falls through to `PersonaAgent.synthesize_playout_complete()` on timeout — that calls `AudioOutput.on_playback_finished(pushed_duration, interrupted=False)` ourselves, waking the waiter without cutting off audio mid-sentence. `force_listening()` remains only as the nuclear last resort.
 - **Database migrations** run inline in the FastAPI lifespan hook via `run_migrations()` in db.py. All DDL is idempotent (`CREATE TABLE IF NOT EXISTS`).
 - **Deployment configs** (`fly.toml`, `livekit.toml`) are gitignored. Copy from `.example` files and fill in your values.
 

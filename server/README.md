@@ -32,7 +32,8 @@ src/podcast_commentary/agent/
 ├── fox_config.py              # FoxConfig schema + loader + CONFIG export
 └── fox_configs/               # Preset bank — one file per personality
     ├── __init__.py
-    └── default.py             # Stock production values
+    ├── fox.py                 # Stock production values (the primary comedian)
+    └── chaos_agent.py         # Alien — the chaos co-host
 ```
 
 `fox_config.py` defines the `FoxConfig` dataclass with nine nested sub-configs:
@@ -53,13 +54,13 @@ Every module (`prompts.py`, `angles.py`, `commentary.py`, `comedian.py`, `user_t
 
 ### Switching presets
 
-The active preset is selected by the `FOX_CONFIG` env var in `server/.env` (defaults to `default`). Its value must match a filename in `fox_configs/` (without the `.py` extension).
+The active preset is selected by the `FOX_CONFIG` env var in `server/.env` (defaults to `fox`). Its value must match a filename in `fox_configs/` (without the `.py` extension).
 
 **To create and test a new preset:**
 
 ```bash
-# 1. Copy the default as a starting point
-cp src/podcast_commentary/agent/fox_configs/default.py \
+# 1. Copy fox as a starting point
+cp src/podcast_commentary/agent/fox_configs/fox.py \
    src/podcast_commentary/agent/fox_configs/spicy.py
 
 # 2. Edit spicy.py — tweak anything in the FoxConfig(...) block.
@@ -84,5 +85,5 @@ If `FOX_CONFIG` points at a file that doesn't exist, the agent fails fast with a
 
 - **Frozen dataclasses.** Every sub-config is `@dataclass(frozen=True)` — presets are read-only snapshots so nothing mutates Fox's behaviour mid-session.
 - **Loaded once per process.** `CONFIG` is evaluated at import time. To switch presets, change `FOX_CONFIG` in `.env` and restart the agent; hot-reload is not supported.
-- **Keep `default.py` as ground truth.** When adding new knobs, update the `FoxConfig` schema in `fox_config.py`, add the value to `default.py`, and reference it from the module that needs it.
+- **Keep `fox.py` as ground truth.** When adding new knobs, update the `FoxConfig` schema in `fox_config.py`, add the value to `fox.py`, and reference it from the module that needs it.
 - **Don't hardcode new knobs.** If you find yourself about to drop a new magic number or prompt string into a module, add it to `FoxConfig` first.

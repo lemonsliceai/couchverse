@@ -1,7 +1,8 @@
-"""Default FoxConfig — the stock production values.
+"""Fox — the primary comedian preset.
 
-Duplicate this file to create a variant (e.g. ``spicy.py``), tweak any
-field, and activate it by setting ``FOX_CONFIG=spicy`` in ``server/.env``.
+Stock production values. Duplicate this file to create a variant
+(e.g. ``spicy.py``), tweak any field, and activate it by setting
+``FOX_CONFIG=spicy`` in ``server/.env``.
 """
 
 from podcast_commentary.agent.fox_config import (
@@ -91,7 +92,7 @@ COMEDIC_ANGLES: tuple[str, ...] = (
 
 
 CONFIG = FoxConfig(
-    name="default",
+    name="fox",
     persona=PersonaConfig(
         system_prompt=SYSTEM_PROMPT,
         intro_prompt=INTRO_PROMPT,
@@ -164,7 +165,7 @@ CONFIG = FoxConfig(
         avatar_url="https://podcast-commentary-api.fly.dev/static/fox_2x3.jpg",
     ),
     playout=PlayoutConfig(
-        intro_timeout_s=15.0,
+        intro_timeout_s=8.0,
         commentary_timeout_s=12.0,
     ),
     # Verbalized sampling (advanced): generate N candidates per turn, pick

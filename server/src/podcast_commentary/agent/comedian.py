@@ -63,6 +63,33 @@ def _log_task_exception(task: asyncio.Task) -> None:
         )
 
 
+def _read_pushed_duration(node: Any | None) -> float:
+    """Read ``_pushed_duration`` from an ``AudioOutput`` node (private attr)."""
+    if node is None:
+        return 0.0
+    value = getattr(node, "_pushed_duration", None)
+    if isinstance(value, (int, float)):
+        return float(value)
+    return 0.0
+
+
+def _deepest_audio_chain(node: Any | None, *, max_depth: int = 8) -> Any | None:
+    """Walk ``next_in_chain`` to the deepest ``AudioOutput`` in the chain.
+
+    ``AgentSession.output.audio`` is the *outer* wrapper (e.g.
+    ``_SyncedAudioOutput``), but the node actually writing to the wire is
+    deeper (e.g. ``DataStreamAudioOutput``). For diagnostic reads like
+    ``_pushed_duration`` the inner one is authoritative.
+    """
+    cur = node
+    for _ in range(max_depth):
+        nxt = getattr(cur, "next_in_chain", None)
+        if nxt is None or nxt is cur:
+            return cur
+        cur = nxt
+    return cur
+
+
 # ---------------------------------------------------------------------------
 # Verbalized-sampling helpers — persona-neutral.
 # ---------------------------------------------------------------------------
@@ -184,6 +211,9 @@ class PersonaAgent(Agent):
         self._pending_angle_name: str | None = None
         self._gate: SpeechGate | None = None
         self._phase = FoxPhase.LISTENING
+        # UI-driven reply-length preference — "short" | "long" | None (normal).
+        # Director sets this from the extension's settings message.
+        self._length_hint: str | None = None
 
         # Set by ``on_enter`` so the Director can wait for both personas to
         # finish initial composition before delivering the coordinated intro.
@@ -307,6 +337,7 @@ class PersonaAgent(Agent):
             angle=angle,
             co_speaker_history=co_speaker_history,
             co_speaker_label=co_speaker_label,
+            length_hint=self._length_hint,
         )
         self._set_phase(FoxPhase.COMMENTATING)
         return self.gate.speak(prompt=prompt)
@@ -332,6 +363,7 @@ class PersonaAgent(Agent):
             angle=angle,
             co_speaker_history=co_speaker_history,
             co_speaker_label=co_speaker_label,
+            length_hint=self._length_hint,
         )
         self._set_phase(FoxPhase.REPLYING)
         return self.gate.speak(prompt=prompt, allow_interruptions=True)
@@ -340,6 +372,77 @@ class PersonaAgent(Agent):
         """Cut off the current turn if any. Safe to call from any thread."""
         if self._gate is not None:
             self._gate.interrupt()
+
+    def force_listening(self) -> None:
+        """Recovery hook: force phase to LISTENING and interrupt any live handle.
+
+        Used when an avatar hangs on ``playback_finished`` and we can't wait
+        for the speech handle to resolve cleanly. Advancing the phase
+        immediately unblocks ``Director._room_is_listening`` so the silence
+        loop and sentence-triggered commentary can fire again. The
+        ``SpeechGate`` identity check in ``_on_done`` means the late
+        resolution of the stuck handle becomes a harmless no-op once we've
+        started a new turn.
+
+        Prefer ``synthesize_playout_complete`` over this — it lets
+        already-pushed audio finish reaching the avatar instead of cutting
+        it off mid-sentence. ``force_listening`` is the last-resort escape
+        hatch when a handle is truly stuck and audio isn't flowing.
+        """
+        if self._phase in (FoxPhase.INTRO, FoxPhase.COMMENTATING, FoxPhase.REPLYING):
+            self._set_phase(FoxPhase.LISTENING)
+        if self._gate is not None:
+            self._gate.interrupt()
+
+    def synthesize_playout_complete(self) -> tuple[float, float]:
+        """Manually fire ``playback_finished`` on this persona's audio output.
+
+        LiveKit's ``DataStreamAudioOutput`` (the sink installed by
+        ``lemonslice.AvatarSession``) normally marks a turn done when the
+        avatar sends the ``lk.playback_finished`` RPC back. LemonSlice's
+        *second* avatar in a multi-avatar room is unreliable about sending
+        that RPC — see GitHub livekit/agents #3510 and #4315. When the RPC
+        is missing, ``SpeechHandle.wait_for_playout`` blocks forever.
+
+        The audio chain is:
+        ``AgentSession → _SyncedAudioOutput → DataStreamAudioOutput``.
+        Both layers track ``_pushed_duration`` (private) — the outer for
+        transcript sync, the inner for wire bytes. Calling
+        ``on_playback_finished`` on the outer wrapper automatically
+        propagates via the framework's ``next_in_chain`` event plumbing,
+        but we walk to the deepest (DataStream) layer to read the most
+        authoritative duration — that's the one that tells us whether
+        frames actually reached the wire.
+
+        Returns ``(outer_pushed, inner_pushed)`` so callers can log both
+        and tell "audio never flowed" (both 0) apart from "audio flowed
+        but vendor never confirmed" (both > 0).
+        """
+        audio = self._audio_output()
+        if audio is None:
+            return 0.0, 0.0
+        outer = _read_pushed_duration(audio)
+        inner = _read_pushed_duration(_deepest_audio_chain(audio))
+        # Use whichever is larger as the reported position — both should
+        # match in normal operation, but the deeper layer is closest to
+        # the wire and therefore the ground truth.
+        position = max(outer, inner)
+        try:
+            audio.on_playback_finished(playback_position=position, interrupted=False)
+        except Exception:
+            logger.debug("synthesize_playout_complete failed", exc_info=True)
+            return 0.0, 0.0
+        return outer, inner
+
+    def _audio_output(self) -> Any | None:
+        """Return this persona's AgentSession audio output (or None if gone)."""
+        session = getattr(self, "session", None)
+        output = getattr(session, "output", None) if session is not None else None
+        return getattr(output, "audio", None) if output is not None else None
+
+    def set_length_hint(self, level: str | None) -> None:
+        """Store the UI's reply-length preference for the next turn."""
+        self._length_hint = level
 
     def mark_user_talking(self) -> None:
         """Director signals: user push-to-talk has started. Move into USER_TALKING."""

@@ -67,7 +67,7 @@ class SpeechGate:
         *,
         prompt: str,
         allow_interruptions: bool = False,
-    ) -> SpeechHandle:
+    ) -> SpeechHandle | None:
         """Kick off an agent turn.
 
         Passes an empty chat_ctx so the LLM only sees `[SYSTEM, USER]` per
@@ -87,17 +87,32 @@ class SpeechGate:
         `allow_interruptions` defaults to False so podcast audio can't step
         on Fox mid-sentence. Set True for user-reply turns — the user
         should be able to cut him off with a fresh hold-to-talk.
+
+        Returns ``None`` if the underlying ``AgentSession`` has already
+        been closed (user disconnected between "decide to speak" and
+        "start speaking"). Callers propagate the ``None`` up and skip
+        ``wait_for_playout`` — there's nothing to wait for.
         """
         logger.info(
             "=== %s SPEAK PROMPT ===\n%s\n=== END SPEAK PROMPT ===",
             self._name.upper(),
             prompt,
         )
-        handle = self._session.generate_reply(
-            user_input=prompt,
-            chat_ctx=llm.ChatContext.empty(),
-            allow_interruptions=allow_interruptions,
-        )
+        try:
+            handle = self._session.generate_reply(
+                user_input=prompt,
+                chat_ctx=llm.ChatContext.empty(),
+                allow_interruptions=allow_interruptions,
+            )
+        except RuntimeError as exc:
+            # The framework raises a bare RuntimeError with this exact
+            # message when the session was closed (e.g. by participant
+            # disconnect) before we got here. Treat it as "nothing to say"
+            # rather than crashing the Director's silence/selection loop.
+            if "AgentSession isn't running" in str(exc):
+                logger.debug("%s speak skipped — session closed", self._name)
+                return None
+            raise
         self._current = handle
         handle.add_done_callback(self._on_done)
         return handle

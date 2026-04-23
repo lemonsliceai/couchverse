@@ -33,11 +33,11 @@ class Settings(BaseSettings):
     # first persona in the list is the "primary" — it owns the user mic STT
     # (push-to-talk) and its timing values drive shared cadence.
     # Defaults to Fox + Alien for the dual-avatar experience.
-    PERSONAS: str = "default,chaos_agent"
+    PERSONAS: str = "fox,chaos_agent"
 
     # Legacy single-persona selector. If set and PERSONAS is empty, falls
     # back to a single persona using this name. Kept for back-compat.
-    FOX_CONFIG: str = "default"
+    FOX_CONFIG: str = "fox"
 
     # Speaker-selection LLM (Director judge). Cheap + fast wins here — we
     # only need a JSON pick, not creative writing. Same Groq model as the

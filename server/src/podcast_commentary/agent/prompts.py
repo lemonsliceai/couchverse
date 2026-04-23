@@ -19,6 +19,31 @@ from podcast_commentary.agent.fox_config import CONFIG, FoxConfig
 # preset that enables verbalized sampling gets selection for free.
 SAMPLING_SENTINEL = "[[VS_CANDIDATES]]"
 
+# Reply-length steering from the UI. Appended as an extra prompt block so the
+# model reads it *after* the persona's own CTA (persona still owns the core
+# "how to speak" instruction; this just dials length up or down). "normal" is
+# the baseline and produces no prompt change, which keeps the default path
+# byte-identical to pre-feature prompts.
+_LENGTH_DIRECTIVES: dict[str, str] = {
+    "short": (
+        "[LENGTH — user dialed this to short]\n"
+        "One beat. Under ~10 words. Cut setup, land the punch, stop."
+    ),
+    "long": (
+        "[LENGTH — user dialed this to long]\n"
+        "Stretch out a little — up to two sentences. Still punchy, still "
+        "lands — but give the bit room to breathe."
+    ),
+}
+
+
+def _length_block(level: str | None) -> str | None:
+    """Return the prompt block for a length setting, or None for normal/unset."""
+    if not level:
+        return None
+    return _LENGTH_DIRECTIVES.get(level)
+
+
 # Re-exported for back-compat. New code should call ``build_system_prompt``
 # with a specific persona's config — there is no "the" system prompt when
 # multiple personas share the room.
@@ -107,6 +132,7 @@ def build_commentary_request(
     angle: str | None = None,
     co_speaker_history: list[str] | None = None,
     co_speaker_label: str | None = None,
+    length_hint: str | None = None,
 ) -> str:
     """Assemble the per-turn prompt for unsolicited commentary."""
     if angle is None:
@@ -125,6 +151,10 @@ def build_commentary_request(
     parts.append(f"[LENS: {angle}]")
     parts.append(config.persona.commentary_cta)
 
+    length_block = _length_block(length_hint)
+    if length_block:
+        parts.append(length_block)
+
     sampling = _sampling_instruction(config)
     if sampling:
         parts.append(sampling)
@@ -141,6 +171,7 @@ def build_user_reply_request(
     angle: str | None = None,
     co_speaker_history: list[str] | None = None,
     co_speaker_label: str | None = None,
+    length_hint: str | None = None,
 ) -> str:
     """Assemble the per-turn prompt for a push-to-talk reply."""
     if angle is None:
@@ -157,6 +188,10 @@ def build_user_reply_request(
     parts.append(f'[YOUR FRIEND ON THE COUCH JUST SPOKE TO YOU]\nThey said: "{user_text}"')
     parts.append(f"[LENS: {angle}]")
     parts.append(config.persona.user_reply_cta)
+
+    length_block = _length_block(length_hint)
+    if length_block:
+        parts.append(length_block)
 
     sampling = _sampling_instruction(config)
     if sampling:

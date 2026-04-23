@@ -2,11 +2,11 @@
 
 Presets live in ``fox_configs/<name>.py`` and each export a top-level
 ``CONFIG: FoxConfig``. The active preset is selected by the ``FOX_CONFIG``
-env var (defaults to ``"default"``); switch presets by editing that var in
+env var (defaults to ``"fox"``); switch presets by editing that var in
 ``server/.env`` and restarting the agent.
 
 To add a new preset:
-  1. Copy ``fox_configs/default.py`` to ``fox_configs/<my_preset>.py``.
+  1. Copy ``fox_configs/fox.py`` to ``fox_configs/<my_preset>.py``.
   2. Edit any field you want to tune.
   3. Set ``FOX_CONFIG=<my_preset>`` in ``server/.env``.
   4. Restart the agent.
@@ -193,9 +193,9 @@ def _resolve_persona_names() -> list[str]:
     ``PERSONAS`` (comma-separated) wins. Falls back to the legacy single
     ``FOX_CONFIG`` value so older deployments keep working unchanged.
     """
-    raw = (settings.PERSONAS or settings.FOX_CONFIG or "default").strip()
+    raw = (settings.PERSONAS or settings.FOX_CONFIG or "fox").strip()
     names = [n.strip() for n in raw.split(",") if n.strip()]
-    return names or ["default"]
+    return names or ["fox"]
 
 
 def load_active_configs() -> list[FoxConfig]:

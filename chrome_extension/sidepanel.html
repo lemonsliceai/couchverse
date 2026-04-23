@@ -8,26 +8,12 @@
 </head>
 <body>
   <div id="app">
-    <!-- Header -->
-    <header id="header">
-      <h1>Watch with <em>Fox &amp; Alien</em></h1>
-      <div id="status" class="status-dot disconnected">
-        <span class="dot"></span>
-        <span id="status-text">Offline</span>
-      </div>
-    </header>
-
     <!-- Setup screen (shown before session starts).
-         Mirrors the session screen: status bar at top, stacked 2:3
-         portraits in the middle, controls panel at the bottom. The
-         portraits visually "become" the live avatars once connected,
-         so setup → session reads as the same space animating to life. -->
+         Mirrors the session screen: stacked 2:3 portraits in the middle,
+         controls panel at the bottom. The portraits visually "become" the
+         live avatars once connected, so setup → session reads as the same
+         space animating to life. -->
     <div id="setup-screen">
-      <div id="setup-status">
-        <span class="status-icon">&#x1F3AC;</span>
-        <span id="video-title" class="status-mood">Detecting video...</span>
-      </div>
-
       <div id="cast-stack">
         <div class="cast-portrait">
           <img src="icons/fox_2x3.jpg" alt="Fox" />
@@ -43,25 +29,12 @@
         <button id="start-btn" class="btn-primary" disabled>
           Watch with Fox &amp; Alien
         </button>
-        <div id="settings-row">
-          <label>
-            API URL
-            <input id="api-url" type="text" spellcheck="false" />
-          </label>
-        </div>
         <p id="setup-error" class="error hidden"></p>
       </div>
     </div>
 
     <!-- Session screen (shown after connection) -->
     <div id="session-screen" class="hidden">
-
-      <!-- Status Bar — game HUD element -->
-      <div id="fox-status">
-        <span class="status-icon" id="fox-status-icon">&#x1F98A;</span>
-        <span class="status-label" id="status-speaker">The Couch</span>
-        <span class="status-mood" id="fox-mood">Joining...</span>
-      </div>
 
       <!-- Two stacked avatar slots — populated dynamically when each
            lemonslice-avatar-<name> participant connects. The data-name
@@ -73,7 +46,7 @@
            fades in over the preview. Keeps the panel visually populated
            during the ~1-2s avatar boot instead of showing dead space. -->
       <div id="avatars-stack">
-        <div class="avatar-slot has-preview" data-name="default" data-label="Fox">
+        <div class="avatar-slot has-preview" data-name="fox" data-label="Fox">
           <img class="avatar-preview" src="icons/fox_2x3.jpg" alt="Fox" />
           <div class="avatar-video"></div>
           <div class="avatar-badge">
@@ -97,9 +70,47 @@
       <!-- Audio renderer — hidden elements for the comedians' voices -->
       <div id="audio-container" class="hidden"></div>
 
-      <!-- Controls — Game HUD Panel -->
+      <!-- Controls — Game HUD Panel.
+           Pacing dials live in a collapsed disclosure so they don't eat
+           vertical space the avatars want. Set-and-forget settings —
+           users adjust once and rarely revisit, so the default-closed
+           state buys ~100px of avatar height back. Skip/End stay pinned. -->
       <div id="controls">
+        <details id="pacing-disclosure">
+          <summary>
+            <span class="disclosure-label">Pacing</span>
+            <span class="disclosure-chevron" aria-hidden="true">⌄</span>
+          </summary>
+
+          <div class="disclosure-body">
+            <div class="control-group" role="group" aria-label="Chattiness">
+              <div class="control-label">
+                <span class="control-title">Chattiness</span>
+                <span class="control-hint" id="chattiness-hint">how often they chime in</span>
+              </div>
+              <div class="segmented" data-setting="frequency">
+                <button type="button" class="seg-btn" data-value="quiet">Quiet</button>
+                <button type="button" class="seg-btn is-active" data-value="normal">Normal</button>
+                <button type="button" class="seg-btn" data-value="chatty">Chatty</button>
+              </div>
+            </div>
+
+            <div class="control-group" role="group" aria-label="Reply length">
+              <div class="control-label">
+                <span class="control-title">Reply length</span>
+                <span class="control-hint" id="length-hint">how much they say per turn</span>
+              </div>
+              <div class="segmented" data-setting="length">
+                <button type="button" class="seg-btn" data-value="short">Short</button>
+                <button type="button" class="seg-btn is-active" data-value="normal">Normal</button>
+                <button type="button" class="seg-btn" data-value="long">Long</button>
+              </div>
+            </div>
+          </div>
+        </details>
+
         <div class="control-actions">
+          <button id="skip-btn" class="btn-skip" disabled>Skip commentary</button>
           <button id="end-btn" class="btn-end">End</button>
         </div>
       </div>

@@ -19,25 +19,20 @@ import {
 // ── DOM helpers ──
 const $ = (sel) => document.querySelector(sel);
 
-// ── API URL defaults ──
-// Unpacked/dev installs default to localhost so anyone cloning this repo
-// can run the whole stack locally without editing code. Chrome Web Store
-// installs default to the hosted production API. An explicit user override
-// in chrome.storage.local wins over both.
-//
-// If you fork this project and publish your own build to the Web Store,
-// change PROD_API_URL to point at your deployed API.
+// ── API URL ──
+// Unpacked/dev installs hit localhost so anyone cloning this repo can run
+// the whole stack locally without editing code. Chrome Web Store installs
+// hit the hosted production API. If you fork this project and publish your
+// own build to the Web Store, change PROD_API_URL to point at your deployed
+// API.
 const LOCAL_API_URL = "http://localhost:8080";
 const PROD_API_URL = "https://watch-with-fox.fly.dev";
 
-function isStoreInstall() {
+function getApiUrl() {
   // `update_url` is injected into the manifest automatically for extensions
   // installed from the Chrome Web Store. It's absent for unpacked/dev loads.
-  return "update_url" in chrome.runtime.getManifest();
-}
-
-function getDefaultApiUrl() {
-  return isStoreInstall() ? PROD_API_URL : LOCAL_API_URL;
+  const isStoreInstall = "update_url" in chrome.runtime.getManifest();
+  return isStoreInstall ? PROD_API_URL : LOCAL_API_URL;
 }
 
 // ── State ──
@@ -47,12 +42,24 @@ let tabAudioStream = null;
 let tabAudioContext = null;
 let tabAudioGain = null;
 let ducking = false;
+// Guards against a rapid End → Start double-click re-entering the flow
+// while the room is still tearing down. `endSession` holds this across
+// the full `room.disconnect()` promise; `startSession` refuses to run
+// until it clears. Without this, a new session can publish its
+// podcast-audio track before the old room's disconnect has reached the
+// server, and the agent briefly sees two user participants.
+let sessionBusy = false;
 // Tracks which personas are currently mid-utterance. Ducking holds while
 // the set is non-empty so back-to-back turns from different speakers don't
 // punch the video back up between them.
 const speakingNow = new Set();
-// Per-persona caption history keyed by persona name (e.g. "default", "chaos_agent").
+// Per-persona caption history keyed by persona name (e.g. "fox", "chaos_agent").
 const captionsByPersona = new Map();
+// Currently-connected LemonSlice avatar personas. When this drains to empty
+// after at least one has connected, the session auto-ends — there's no point
+// staying on the session screen with no comedians left to chime in.
+const connectedAvatars = new Set();
+let everHadAvatar = false;
 
 // LemonSlice avatar participants are named lemonslice-avatar-<persona>.
 // Routing decisions in onTrackSubscribed / onActiveSpeakers parse the suffix.
@@ -68,38 +75,16 @@ function slotFor(personaName) {
   return document.querySelector(`.avatar-slot[data-name="${personaName}"]`);
 }
 
-function labelFor(personaName) {
-  const slot = slotFor(personaName);
-  return slot?.dataset.label || personaName || "";
-}
-
 // ── Init ──
 document.addEventListener("DOMContentLoaded", async () => {
-  // Pick the default API URL based on install type, then let any explicit
-  // user override replace it.
-  const defaultApiUrl = getDefaultApiUrl();
-  const stored = await chrome.storage.local.get("apiUrl");
-  $("#api-url").value = stored.apiUrl || defaultApiUrl;
-  $("#api-url").placeholder = defaultApiUrl;
-
-  // Save API URL on change — or clear the override if the user blanks it
-  // out or retypes the current default.
-  $("#api-url").addEventListener("change", () => {
-    const value = $("#api-url").value.trim();
-    if (!value || value === getDefaultApiUrl()) {
-      chrome.storage.local.remove("apiUrl");
-      $("#api-url").value = getDefaultApiUrl();
-    } else {
-      chrome.storage.local.set({ apiUrl: value });
-    }
-  });
-
   // Detect active media tab
   detectActiveMedia();
 
   // Wire up controls
   $("#start-btn").addEventListener("click", startSession);
   $("#end-btn").addEventListener("click", endSession);
+  $("#skip-btn").addEventListener("click", skipCommentary);
+  initPacingControls();
 
   // Listen for content script messages relayed through background
   chrome.runtime.onMessage.addListener((msg) => {
@@ -175,16 +160,12 @@ function stripTitleSuffix(title) {
 }
 
 function showNoVideoState() {
-  $("#video-title").textContent = "Open a video or audio page in this tab";
   $("#start-btn").disabled = true;
   delete $("#start-btn").dataset.videoUrl;
   delete $("#start-btn").dataset.videoTitle;
 }
 
 function updateVideoPreview(info) {
-  if (info.title) {
-    $("#video-title").textContent = info.title;
-  }
   if (info.url) {
     $("#start-btn").disabled = false;
     $("#start-btn").dataset.videoUrl = info.url;
@@ -195,15 +176,20 @@ function updateVideoPreview(info) {
 // ── Session Lifecycle ──
 async function startSession() {
   const btn = $("#start-btn");
+  // Prevent re-entering mid-teardown: `endSession` holds `sessionBusy`
+  // across the room.disconnect promise, so a stray click here during that
+  // window would otherwise start a new room before the old one is gone.
+  if (sessionBusy) return;
   const videoUrl = btn.dataset.videoUrl;
   const videoTitle = btn.dataset.videoTitle || "";
-  const apiUrl = $("#api-url").value.trim();
+  const apiUrl = getApiUrl();
 
   if (!videoUrl) {
     showError("No active media tab detected");
     return;
   }
 
+  sessionBusy = true;
   btn.disabled = true;
   btn.classList.add("loading");
   btn.textContent = "Starting...";
@@ -216,13 +202,9 @@ async function startSession() {
     // 2. Show session screen
     $("#setup-screen").classList.add("hidden");
     $("#session-screen").classList.remove("hidden");
-    updateStatus("connecting");
-    setFoxMood("Connecting...");
 
     // 3. Connect to LiveKit
     await connectRoom(session.token, session.livekit_url);
-    updateStatus("connected");
-    setFoxMood("Listening");
 
     // 4. Capture and publish tab audio
     await captureAndPublishTabAudio();
@@ -236,46 +218,69 @@ async function startSession() {
     btn.textContent = "Watch with Fox & Alien";
     $("#setup-screen").classList.remove("hidden");
     $("#session-screen").classList.add("hidden");
+  } finally {
+    sessionBusy = false;
   }
 }
 
 async function endSession() {
-  updateStatus("disconnected");
-  if (room) {
-    room.disconnect();
-    room = null;
-  }
-  teardownTabAudio();
-  if (unduckTimer) {
-    clearTimeout(unduckTimer);
-    unduckTimer = null;
-  }
-  ducking = false;
-  speakingNow.clear();
-  captionsByPersona.clear();
-  document
-    .querySelectorAll(".avatar-slot .captions")
-    .forEach((el) => (el.innerHTML = ""));
-  document
-    .querySelectorAll(".avatar-slot")
-    .forEach((el) => {
-      el.classList.remove("speaking", "breathing", "video-live");
-      // Drop the live video element so the next session starts from a
-      // clean preview-only state.
-      const videoContainer = el.querySelector(".avatar-video");
-      if (videoContainer) videoContainer.innerHTML = "";
-    });
+  if (sessionBusy) return;
+  sessionBusy = true;
 
-  // Return to setup screen
-  $("#session-screen").classList.add("hidden");
-  $("#setup-screen").classList.remove("hidden");
-  const btn = $("#start-btn");
-  btn.disabled = false;
-  btn.classList.remove("loading");
-  btn.textContent = "Watch with Fox";
+  const endBtn = $("#end-btn");
+  if (endBtn) endBtn.disabled = true;
 
-  // Re-detect media in the active tab
-  detectActiveMedia();
+  try {
+    if (room) {
+      const prior = room;
+      room = null;
+      // `disconnect(true)` returns a promise that resolves once the
+      // LiveKit transport is actually closed. Awaiting it prevents a
+      // new Start from racing with the old room's teardown.
+      try {
+        await prior.disconnect(true);
+      } catch (err) {
+        console.warn("[ext] room.disconnect raised:", err);
+      }
+    }
+    teardownTabAudio();
+    if (unduckTimer) {
+      clearTimeout(unduckTimer);
+      unduckTimer = null;
+    }
+    ducking = false;
+    speakingNow.clear();
+    updateSkipButton();
+    connectedAvatars.clear();
+    everHadAvatar = false;
+    captionsByPersona.clear();
+    document
+      .querySelectorAll(".avatar-slot .captions")
+      .forEach((el) => (el.innerHTML = ""));
+    document
+      .querySelectorAll(".avatar-slot")
+      .forEach((el) => {
+        el.classList.remove("speaking", "breathing", "video-live");
+        // Drop the live video element so the next session starts from a
+        // clean preview-only state.
+        const videoContainer = el.querySelector(".avatar-video");
+        if (videoContainer) videoContainer.innerHTML = "";
+      });
+
+    // Return to setup screen
+    $("#session-screen").classList.add("hidden");
+    $("#setup-screen").classList.remove("hidden");
+    const btn = $("#start-btn");
+    btn.disabled = false;
+    btn.classList.remove("loading");
+    btn.textContent = "Watch with Fox";
+
+    // Re-detect media in the active tab
+    detectActiveMedia();
+  } finally {
+    if (endBtn) endBtn.disabled = false;
+    sessionBusy = false;
+  }
 }
 
 // ── API ──
@@ -308,6 +313,8 @@ async function connectRoom(token, livekitUrl) {
   room.on(RoomEvent.ActiveSpeakersChanged, onActiveSpeakers);
   room.on(RoomEvent.ConnectionStateChanged, onConnectionState);
   room.on(RoomEvent.Disconnected, onDisconnected);
+  room.on(RoomEvent.ParticipantConnected, onParticipantConnected);
+  room.on(RoomEvent.ParticipantDisconnected, onParticipantDisconnected);
 
   await room.connect(livekitUrl, token);
   console.log("[ext] Connected to LiveKit room");
@@ -333,13 +340,25 @@ async function captureAndPublishTabAudio() {
     );
   });
 
-  // 2. Get MediaStream from the stream ID
+  // 2. Get MediaStream from the stream ID.
+  //
+  // Disable echoCancellation / noiseSuppression / autoGainControl. getUserMedia
+  // turns these on by default, and AGC in particular quietly attenuates loud
+  // tab audio to normalize loudness — perceived as a small volume drop the
+  // moment capture starts. Turning them off keeps the loopback bit-perfect so
+  // tab volume stays put, and the avatar voices (played through <audio> at
+  // default 1.0 gain) sit at the same reference level as the untouched tab.
   tabAudioStream = await navigator.mediaDevices.getUserMedia({
     audio: {
       mandatory: {
         chromeMediaSource: "tab",
         chromeMediaSourceId: response.streamId,
       },
+      optional: [
+        { echoCancellation: false },
+        { noiseSuppression: false },
+        { autoGainControl: false },
+      ],
     },
   });
 
@@ -444,7 +463,6 @@ function onTrackSubscribed(track, publication, participant) {
     // drives a fade-in on the video + fade-out on the still image so the
     // transition reads as the preview "animating into" the avatar.
     slot.classList.add("video-live", "breathing");
-    setFoxMood("Vibing");
     spawnReaction(slot, "eyes");
     return;
   }
@@ -467,12 +485,12 @@ function onDataReceived(payload, participant, kind, topic) {
     return;
   }
 
-  // Agent ready handshake — sync current playhead
+  // Agent ready handshake — sync current playhead + push the user's
+  // saved pacing preferences so they take effect from the first turn.
   if (topic === "commentary.control" && msg.type === "agent_ready") {
     console.log("[ext] Agent ready — syncing playhead");
-    setFoxMood("Listening");
-    setStatusSpeaker("The Couch");
     syncPlayheadToAgent();
+    publishPacing();
     return;
   }
 
@@ -481,8 +499,6 @@ function onDataReceived(payload, participant, kind, topic) {
   // with the persona name so we know which slot lights up.
   if (topic === "commentary.control" && msg.type === "commentary_start") {
     const personaName = msg.speaker;
-    setFoxMood("Cooking");
-    setStatusSpeaker(labelFor(personaName));
     if (personaName) {
       speakingNow.add(personaName);
       const slot = slotFor(personaName);
@@ -490,6 +506,7 @@ function onDataReceived(payload, participant, kind, topic) {
       spawnReaction(slot, "random");
     }
     setDucking(true);
+    updateSkipButton();
     return;
   }
 
@@ -500,10 +517,9 @@ function onDataReceived(payload, participant, kind, topic) {
       slotFor(personaName)?.classList.remove("speaking");
     }
     if (speakingNow.size === 0) {
-      setFoxMood("Listening");
-      setStatusSpeaker("The Couch");
       setDucking(false);
     }
+    updateSkipButton();
     return;
   }
 
@@ -547,18 +563,30 @@ function onActiveSpeakers(speakers) {
 
 function onConnectionState(state) {
   console.log("[ext] Connection state:", state);
-  if (state === ConnectionState.Connected) {
-    updateStatus("connected");
-  } else if (state === ConnectionState.Reconnecting) {
-    updateStatus("connecting");
-    setFoxMood("Reconnecting...");
-  }
 }
 
 function onDisconnected(reason) {
   console.log("[ext] Disconnected:", reason);
-  updateStatus("disconnected");
-  setFoxMood("Disconnected");
+}
+
+function onParticipantConnected(participant) {
+  const personaName = personaFromAvatarIdentity(participant.identity);
+  if (!personaName) return;
+  connectedAvatars.add(personaName);
+  everHadAvatar = true;
+}
+
+// Once every avatar that joined this session has left, there's no commentary
+// coming — auto-end so the user lands back on the start screen instead of an
+// empty stage. The `everHadAvatar` gate prevents this from firing during the
+// initial connect window before any avatar has shown up.
+function onParticipantDisconnected(participant) {
+  const personaName = personaFromAvatarIdentity(participant.identity);
+  if (!personaName) return;
+  connectedAvatars.delete(personaName);
+  if (everHadAvatar && connectedAvatars.size === 0) {
+    endSession();
+  }
 }
 
 // ── Playhead Sync ──
@@ -582,6 +610,90 @@ async function syncPlayheadToAgent() {
     }
   } catch (err) {
     console.warn("[ext] Failed to sync playhead:", err);
+  }
+}
+
+// ── Skip Commentary ──
+// Tells the agent to cut off whoever's mid-utterance. Button stays disabled
+// until `commentary_start` flips speakingNow non-empty, so a click is always
+// targeting an actual in-flight turn. The agent answers by interrupting each
+// persona's SpeechHandle, which in turn fires `commentary_end` — the normal
+// handler below clears slot highlights and un-ducks.
+function skipCommentary() {
+  if (speakingNow.size === 0) return;
+  publishControl({ type: "skip" }, "podcast.control");
+}
+
+function updateSkipButton() {
+  const btn = $("#skip-btn");
+  if (!btn) return;
+  btn.disabled = speakingNow.size === 0;
+}
+
+// ── Pacing controls (Chattiness / Reply length) ──
+// Two segmented controls wired through a single handler. Choices persist
+// across sessions in localStorage and are re-sent after `agent_ready` so a
+// freshly-connected agent picks them up. Before the room connects, clicks
+// still update the UI + localStorage — they take effect next session.
+const PACING_STORAGE_KEY = "watch-with-fox.pacing";
+const PACING_DEFAULTS = { frequency: "normal", length: "normal" };
+const pacing = { ...PACING_DEFAULTS };
+
+function initPacingControls() {
+  Object.assign(pacing, loadPacing());
+  for (const group of document.querySelectorAll(".segmented")) {
+    const setting = group.dataset.setting;
+    if (!setting) continue;
+    syncSegmentedGroup(group, pacing[setting]);
+    group.addEventListener("click", (ev) => {
+      const btn = ev.target.closest(".seg-btn");
+      if (!btn || !group.contains(btn)) return;
+      selectPacing(setting, btn.dataset.value);
+    });
+  }
+}
+
+function selectPacing(setting, value) {
+  if (!value || pacing[setting] === value) return;
+  pacing[setting] = value;
+  savePacing();
+  const group = document.querySelector(`.segmented[data-setting="${setting}"]`);
+  if (group) syncSegmentedGroup(group, value);
+  publishPacing();
+}
+
+function syncSegmentedGroup(group, activeValue) {
+  for (const btn of group.querySelectorAll(".seg-btn")) {
+    btn.classList.toggle("is-active", btn.dataset.value === activeValue);
+  }
+}
+
+function publishPacing() {
+  publishControl(
+    { type: "settings", frequency: pacing.frequency, length: pacing.length },
+    "podcast.control",
+  );
+}
+
+function loadPacing() {
+  try {
+    const raw = localStorage.getItem(PACING_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return {
+      frequency: parsed.frequency || PACING_DEFAULTS.frequency,
+      length: parsed.length || PACING_DEFAULTS.length,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function savePacing() {
+  try {
+    localStorage.setItem(PACING_STORAGE_KEY, JSON.stringify(pacing));
+  } catch {
+    // Private mode / quota — silently ignore; the UI still works per-session.
   }
 }
 
@@ -727,45 +839,7 @@ function spawnReaction(slot, type) {
   setTimeout(() => particle.remove(), 2000);
 }
 
-// ── Fox Status / Mood ──
-const MOOD_ICONS = {
-  "Joining...":      "\u{1F98A}",
-  "Connecting...":   "\u{1F50C}",
-  "Listening":       "\u{1F3A7}",
-  "Vibing":          "\u{1F60E}",
-  "Cooking":         "\u{1F525}",
-  "Talking":         "\u{1F4AC}",
-  "Thinking...":     "\u{1F4AD}",
-  "Reconnecting...": "\u{1F504}",
-  "Disconnected":    "\u{1F634}",
-};
-
-function setFoxMood(mood) {
-  const moodEl = $("#fox-mood");
-  const iconEl = $("#fox-status-icon");
-  if (moodEl) moodEl.textContent = mood;
-  if (iconEl) iconEl.textContent = MOOD_ICONS[mood] || "\u{1F98A}";
-}
-
-// Update the status bar's speaker label so the user can see at a glance
-// which persona is currently mid-utterance.
-function setStatusSpeaker(label) {
-  const el = $("#status-speaker");
-  if (el) el.textContent = label || "The Couch";
-}
-
 // ── UI Helpers ──
-function updateStatus(state) {
-  const el = $("#status");
-  el.className = `status-dot ${state}`;
-  const labels = {
-    connected: "Live",
-    connecting: "Connecting",
-    disconnected: "Offline",
-  };
-  $("#status-text").textContent = labels[state] || state;
-}
-
 function showError(msg) {
   const el = $("#setup-error");
   el.textContent = msg;

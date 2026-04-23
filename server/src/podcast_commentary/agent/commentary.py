@@ -62,6 +62,10 @@ class CommentaryTimer:
         self._session_start: float = time.time()
         self._in_cooldown: bool = False
         self._cooldown_end: float = 0
+        # Effective MIN_GAP for this session. Defaults to the config-derived
+        # constant; the Director scales this (up for Quiet, down for Chatty)
+        # in response to the extension's settings message.
+        self.min_gap: float = MIN_GAP
 
     def time_since_last_comment(self) -> float:
         # Before the first turn ever lands, measure silence from session
@@ -74,7 +78,7 @@ class CommentaryTimer:
         now = time.time()
 
         # Enforce minimum gap (measured from end-of-speech).
-        if self.time_since_last_comment() < MIN_GAP:
+        if self.time_since_last_comment() < self.min_gap:
             return False
 
         # Enforce burst cooldown

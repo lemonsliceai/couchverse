@@ -86,7 +86,7 @@ def _resolve_personas(metadata: dict) -> list[dict[str, str]]:
         return personas
 
     descriptors: list[dict[str, str]] = []
-    for name in (settings.PERSONAS or settings.FOX_CONFIG or "default").split(","):
+    for name in (settings.PERSONAS or settings.FOX_CONFIG or "fox").split(","):
         name = name.strip()
         if not name:
             continue
@@ -169,28 +169,6 @@ async def _start_avatar(
         return None
 
 
-async def _wait_for_avatar_participant(room: Any, identity: str, timeout: float) -> bool:
-    ready = asyncio.Event()
-
-    def _on_participant(participant: Any) -> None:
-        if participant.identity == identity:
-            ready.set()
-
-    room.on("participant_connected", _on_participant)
-    for p in room.remote_participants.values():
-        if p.identity == identity:
-            ready.set()
-
-    if ready.is_set():
-        return True
-    try:
-        await asyncio.wait_for(ready.wait(), timeout=timeout)
-        return True
-    except TimeoutError:
-        logger.warning("Avatar %s did not connect within %.0fs", identity, timeout)
-        return False
-
-
 def _avatar_identity_for(persona_name: str) -> str:
     """Per-persona avatar participant identity.
 
@@ -220,7 +198,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     sessions: list[AgentSession] = []
     personas: list[PersonaAgent] = []
-    avatar_identities: list[str] = []
+    avatar_identities: dict[str, str] = {}
 
     # Build each persona + its session + its avatar. The first persona
     # in the list is the *primary* — it owns user-mic STT.
@@ -239,7 +217,7 @@ async def entrypoint(ctx: JobContext) -> None:
         sessions.append(session)
 
         identity = _avatar_identity_for(name)
-        avatar_identities.append(identity)
+        avatar_identities[name] = identity
         await _start_avatar(
             config=config,
             avatar_url=avatar_url,
@@ -268,26 +246,40 @@ async def entrypoint(ctx: JobContext) -> None:
     # Wait for every persona's on_enter to compose its SpeechGate.
     await asyncio.gather(*(p.ready.wait() for p in personas))
 
+    # When the user disconnects, the framework auto-closes the AgentSessions
+    # but the *job* keeps running — so the Director's background loops would
+    # keep firing into dead sessions. Hand the Director a callback that ends
+    # the job so the next call dispatches into a clean worker.
+    async def _end_job_on_user_disconnect() -> None:
+        logger.info("User disconnect → requesting job shutdown")
+        try:
+            shutdown = getattr(ctx, "shutdown", None)
+            if shutdown is None:
+                return
+            result = shutdown(reason="user_disconnected")
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            logger.warning("ctx.shutdown raised", exc_info=True)
+
     # Director takes over: intros, speaker selection, user PTT routing.
+    # It owns per-persona avatar-readiness gating so one slow avatar can't
+    # stall the other persona's intro (or the room entirely).
     director = Director(
         personas=personas,
         room=ctx.room,
         primary_session=sessions[0],
+        avatar_identities=avatar_identities,
         session_id=session_id,
+        on_user_disconnect=_end_job_on_user_disconnect,
     )
 
-    # Wait briefly for each avatar participant to actually connect so the
-    # extension has the video tracks rendered before the intro lands.
-    timeout = max(p.config.avatar.startup_timeout_s for p in personas)
-    await asyncio.gather(
-        *(
-            _wait_for_avatar_participant(ctx.room, ident, timeout=timeout)
-            for ident in avatar_identities
-        )
-    )
+    # Register the teardown hook BEFORE starting so a crash mid-start still
+    # triggers the full Director shutdown (podcast pipeline, bg tasks, etc.)
+    # instead of leaking them into the worker.
+    ctx.add_shutdown_callback(director.shutdown)
 
     await director.start()
-    ctx.add_shutdown_callback(director.shutdown)
 
 
 if __name__ == "__main__":
