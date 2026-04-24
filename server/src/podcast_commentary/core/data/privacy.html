@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Privacy Policy — Watch with Fox</title>
+  <title>Privacy Policy, Couchverse</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -23,48 +23,54 @@
   </style>
 </head>
 <body>
-  <h1>Privacy Policy — Watch with Fox</h1>
-  <p class="updated">Last updated: April 22, 2026</p>
+  <h1>Privacy Policy, Couchverse</h1>
+  <p class="updated">Last updated: April 24, 2026</p>
 
   <p>
-    Watch with Fox is a Chrome extension that listens to the YouTube video
-    playing in your active tab and uses AI to deliver real-time comedic
-    commentary in the side panel. This page describes what data the extension
-    handles and how it is used.
+    Couchverse is a Chrome extension that listens to the audio playing in your
+    active browser tab and uses AI to deliver real-time comedic commentary in
+    the side panel. This page describes what data the extension handles and
+    how it is used.
   </p>
 
   <h2>What we collect from your browser</h2>
   <ul>
     <li>
-      <strong>Audio from the active YouTube tab.</strong> When you start a
-      session, the extension captures the audio of the YouTube tab using
-      Chrome's <code>tabCapture</code> API and streams it to our server in
-      real time so the AI can hear what is playing. Tab audio is processed
-      live and is not recorded, saved, or retained on our servers after the
-      session ends.
+      <strong>Audio from the active tab.</strong> When you start a session,
+      the extension captures the audio of your active tab using Chrome's
+      <code>tabCapture</code> API and streams it to our server in real time
+      so the AI can hear what is playing. Tab audio is processed live and is
+      not recorded, saved, or retained on our servers after the session
+      ends.
     </li>
     <li>
-      <strong>The current YouTube video's URL and title.</strong> Used to give
-      the AI context (so it can reference the video by name) and to detect
-      when you navigate to a new video.
+      <strong>The active tab's URL and page title.</strong> Used to give the
+      AI minimal context (so it can refer to what you are watching or
+      listening to) and to detect when you navigate somewhere new.
     </li>
     <li>
-      <strong>Playback state events.</strong> Play, pause, seek, and current
-      playhead position, so commentary stays in sync with what you are
-      watching.
+      <strong>Playback state events.</strong> When the page exposes a primary
+      <code>&lt;video&gt;</code> or <code>&lt;audio&gt;</code> element, the
+      extension observes play, pause, seek, and current playhead position so
+      commentary stays in sync.
+    </li>
+    <li>
+      <strong>Microphone audio during "Hold to talk".</strong> Only while you
+      are holding the talk button, the extension captures your microphone
+      and streams it to the AI so the hosts can respond to you. Mic audio is
+      processed live and is not retained.
     </li>
   </ul>
   <p>
-    The extension does not access your microphone, your camera, your
-    location, your browsing history, or any other tabs.
+    The extension does not access your camera, your location, your browsing
+    history, or any tabs other than the one you started a session on.
   </p>
 
   <h2>What we store on your device</h2>
   <p>
     The extension stores your local preferences (commentary frequency,
-    commentary length, volume levels, and an optional API URL override) in
-    <code>chrome.storage.local</code>. Nothing is synced across devices and no
-    personal information is stored.
+    commentary length, and volume levels) in <code>chrome.storage.local</code>.
+    Nothing is synced across devices and no personal information is stored.
   </p>
 
   <h2>What we store on our servers</h2>
@@ -72,13 +78,13 @@
     For each session, our server may persist:
   </p>
   <ul>
-    <li>An anonymous session ID (UUID), the YouTube video URL, the video title, and timestamps.</li>
-    <li>Transcripts of the video audio and of the AI's commentary, used to maintain conversational context.</li>
+    <li>An anonymous session ID (UUID), the active tab's URL, the page title, and timestamps.</li>
+    <li>Transcripts of the tab audio and of the AI's commentary, used to maintain conversational context during the session.</li>
   </ul>
   <p>
     We do not collect or store names, email addresses, IP addresses for
     profiling, account credentials, payment information, browsing history
-    outside the active YouTube session, or any other personally identifying
+    outside the active session, or any other personally identifying
     information. Sessions are not linked to a user identity.
   </p>
 
@@ -88,10 +94,10 @@
     the following providers:
   </p>
   <ul>
-    <li><strong>LiveKit</strong> — real-time audio/video transport between the extension and the AI agent.</li>
-    <li><strong>Groq</strong> — speech-to-text on the tab audio and language-model generation of commentary.</li>
-    <li><strong>ElevenLabs</strong> — text-to-speech for the AI's voice.</li>
-    <li><strong>LemonSlice</strong> — animated avatar rendering driven by the synthesized voice.</li>
+    <li><strong>LiveKit</strong>, real-time audio and video transport between the extension and the AI agent.</li>
+    <li><strong>Groq</strong>, speech-to-text on the tab audio and language-model generation of commentary.</li>
+    <li><strong>ElevenLabs</strong>, text-to-speech for the hosts' voices.</li>
+    <li><strong>LemonSlice</strong>, animated avatar rendering driven by the synthesized voices.</li>
   </ul>
   <p>
     Each provider receives only what it needs to perform its function. We do
@@ -101,15 +107,15 @@
   </p>
 
   <h2>Permissions</h2>
-  <p>The extension requests the following Chrome permissions, all used solely to provide the commentary feature on YouTube:</p>
+  <p>The extension requests the following Chrome permissions, all used solely to provide the commentary feature:</p>
   <ul>
-    <li><code>tabCapture</code> — capture the YouTube tab's audio.</li>
-    <li><code>activeTab</code> — read the URL and title of the YouTube video.</li>
-    <li><code>scripting</code> — inject the play/pause/seek monitor into youtube.com pages.</li>
-    <li><code>sidePanel</code> — render the avatar and controls in Chrome's side panel.</li>
-    <li><code>storage</code> — save your local preferences.</li>
-    <li><code>tabs</code> — detect tab and URL changes so the session stays in sync.</li>
-    <li>Host access scoped to <code>https://*.youtube.com/*</code>.</li>
+    <li><code>tabCapture</code>, capture the active tab's audio.</li>
+    <li><code>activeTab</code>, read the URL and title of the tab you started a session on.</li>
+    <li><code>scripting</code>, inject the play/pause/seek monitor into the active page.</li>
+    <li><code>sidePanel</code>, render the avatars and controls in Chrome's side panel.</li>
+    <li><code>storage</code>, save your local preferences.</li>
+    <li><code>tabs</code>, detect tab and URL changes so the session stays in sync.</li>
+    <li>Host access is scoped to the sites listed in the extension's manifest.</li>
   </ul>
 
   <h2>Data retention</h2>
@@ -117,13 +123,13 @@
     Tab audio and microphone audio are processed in real time and are not
     retained after the session ends. Anonymous session metadata and
     transcripts may be retained for service improvement and debugging. We
-    delete server-side session records on request — see contact below.
+    delete server-side session records on request. See contact below.
   </p>
 
   <h2>Children</h2>
   <p>
-    Watch with Fox is not directed at children under 13 and we do not
-    knowingly collect data from them.
+    Couchverse is not directed at children under 13 and we do not knowingly
+    collect data from them.
   </p>
 
   <h2>Changes to this policy</h2>

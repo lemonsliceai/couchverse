@@ -230,7 +230,7 @@ async function startSession() {
     showError(err.message);
     btn.disabled = false;
     btn.classList.remove("loading");
-    btn.textContent = "Watch with Fox & Alien";
+    btn.textContent = "Start Couchverse";
     $("#setup-screen").classList.remove("hidden");
     $("#session-screen").classList.add("hidden");
   } finally {
@@ -284,7 +284,7 @@ async function endSession() {
     const btn = $("#start-btn");
     btn.disabled = false;
     btn.classList.remove("loading");
-    btn.textContent = "Watch with Fox & Alien";
+    btn.textContent = "Start Couchverse";
 
     // Re-detect media in the active tab
     detectActiveMedia();
@@ -659,7 +659,7 @@ function updateSkipButton() {
 // across sessions in localStorage and are re-sent after `agent_ready` so a
 // freshly-connected agent picks them up. Before the room connects, clicks
 // still update the UI + localStorage — they take effect next session.
-const PACING_STORAGE_KEY = "watch-with-fox.pacing";
+const PACING_STORAGE_KEY = "couchverse.pacing";
 const PACING_DEFAULTS = { frequency: "normal", length: "normal" };
 const pacing = { ...PACING_DEFAULTS };
 

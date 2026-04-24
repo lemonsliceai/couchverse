@@ -2,7 +2,7 @@
 
 Python 3.11+ backend with two processes: an HTTP API server and a LiveKit AI agent.
 
-The Chrome extension is the only frontend — it captures YouTube tab audio via `chrome.tabCapture` and publishes it as a LiveKit track named `podcast-audio`. The agent subscribes to that track for STT.
+The Chrome extension is the only frontend. It captures the active tab's audio via `chrome.tabCapture` and publishes it as a LiveKit track named `podcast-audio`. The agent subscribes to that track for STT. The name `podcast-audio` is internal and predates the Couchverse rebrand; it still carries arbitrary tab audio (videos, podcasts, livestreams, songs).
 
 ## Commands
 

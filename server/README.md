@@ -1,8 +1,31 @@
-# Server
+<div align="center">
 
-Python 3.11+ backend with two processes: a FastAPI HTTP server and a LiveKit AI agent (Fox).
+# Couchverse — Server
 
-See the repo root [`README.md`](../README.md) for the big picture and [`CLAUDE.md`](CLAUDE.md) for architecture, gotchas, and code style.
+Python 3.11+ backend: a **FastAPI HTTP server** and a **LiveKit AI agent** in two processes.
+
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![LiveKit Agents](https://img.shields.io/badge/LiveKit-Agents-FF5722)](https://docs.livekit.io/agents/)
+[![uv](https://img.shields.io/badge/uv-managed-DE5FE9)](https://docs.astral.sh/uv/)
+[![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64)](https://docs.astral.sh/ruff/)
+[![Fly.io](https://img.shields.io/badge/deploy-Fly.io-7B3FE4)](https://fly.io/)
+
+[↑ Back to root README](../README.md) · [Architecture notes](CLAUDE.md)
+
+</div>
+
+---
+
+## Table of contents
+
+- [Quick start](#quick-start)
+- [Commands](#commands)
+- [FoxConfig — tuning host behaviour](#foxconfig--tuning-host-behaviour)
+  - [Layout](#layout)
+  - [Schema](#schema)
+  - [Switching presets](#switching-presets)
+  - [Notes](#notes)
 
 ## Quick start
 
@@ -13,28 +36,40 @@ uv run uvicorn podcast_commentary.api.app:app --host 0.0.0.0 --port 8080 --reloa
 uv run python src/podcast_commentary/agent/main.py dev                              # agent
 ```
 
-Linting / tests:
+> [!TIP]
+> See the repo root [`README.md`](../README.md) for the big picture and [`CLAUDE.md`](CLAUDE.md) for architecture gotchas and code-style conventions.
 
-```bash
-uv run ruff check src/
-uv run ruff format --check src/
-uv run pytest
-```
+## Commands
 
-## FoxConfig — tuning Fox's behaviour
+| Task | Command |
+|---|---|
+| Install dependencies | `uv sync` |
+| Run API (hot reload) | `uv run uvicorn podcast_commentary.api.app:app --host 0.0.0.0 --port 8080 --reload` |
+| Run agent (local) | `uv run python src/podcast_commentary/agent/main.py dev` |
+| Run agent (prod) | `uv run python src/podcast_commentary/agent/main.py start` |
+| Lint | `uv run ruff check src/` |
+| Format check | `uv run ruff format --check src/` |
+| Tests | `uv run pytest` |
 
-Every knob that shapes Fox — the system prompt, comedic angles, response CTAs, timing/cadence, LLM/STT/TTS/VAD/avatar settings — lives in a single dataclass loaded once per agent process.
+## FoxConfig — tuning host behaviour
+
+Every knob that shapes a host — the system prompt, comedic angles, response CTAs, timing + cadence, and LLM/STT/TTS/VAD/avatar settings — lives in a single dataclass loaded once per agent process.
+
+> [!NOTE]
+> The schema is still named `FoxConfig` for historical reasons; it governs **every** persona, not just the Fox one.
 
 ### Layout
 
 ```
 src/podcast_commentary/agent/
 ├── fox_config.py              # FoxConfig schema + loader + CONFIG export
-└── fox_configs/               # Preset bank — one file per personality
+└── fox_configs/               # Preset bank, one file per personality
     ├── __init__.py
     ├── fox.py                 # Stock production values (the primary comedian)
-    └── chaos_agent.py         # Alien — the chaos co-host
+    └── chaos_agent.py         # Alien, the chaos co-host
 ```
+
+### Schema
 
 `fox_config.py` defines the `FoxConfig` dataclass with nine nested sub-configs:
 
@@ -56,7 +91,8 @@ Every module (`prompts.py`, `angles.py`, `commentary.py`, `comedian.py`, `user_t
 
 The active preset is selected by the `FOX_CONFIG` env var in `server/.env` (defaults to `fox`). Its value must match a filename in `fox_configs/` (without the `.py` extension).
 
-**To create and test a new preset:**
+<details>
+<summary><b>Creating and testing a new preset</b></summary>
 
 ```bash
 # 1. Copy fox as a starting point
@@ -79,11 +115,14 @@ On startup the agent logs the active preset:
 Loaded FoxConfig preset 'spicy' (FOX_CONFIG=spicy)
 ```
 
-If `FOX_CONFIG` points at a file that doesn't exist, the agent fails fast with a clear error — no silent fallback.
+</details>
+
+> [!WARNING]
+> If `FOX_CONFIG` points at a file that doesn't exist, the agent fails fast with a clear error — no silent fallback.
 
 ### Notes
 
-- **Frozen dataclasses.** Every sub-config is `@dataclass(frozen=True)` — presets are read-only snapshots so nothing mutates Fox's behaviour mid-session.
+- **Frozen dataclasses.** Every sub-config is `@dataclass(frozen=True)` — presets are read-only snapshots so nothing mutates a persona mid-session.
 - **Loaded once per process.** `CONFIG` is evaluated at import time. To switch presets, change `FOX_CONFIG` in `.env` and restart the agent; hot-reload is not supported.
 - **Keep `fox.py` as ground truth.** When adding new knobs, update the `FoxConfig` schema in `fox_config.py`, add the value to `fox.py`, and reference it from the module that needs it.
 - **Don't hardcode new knobs.** If you find yourself about to drop a new magic number or prompt string into a module, add it to `FoxConfig` first.

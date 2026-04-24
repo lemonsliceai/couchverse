@@ -1,7 +1,7 @@
 [project]
-name = "watch-with-fox-server"
+name = "couchverse-server"
 version = "0.1.0"
-description = "AI comedian avatar that delivers real-time comedic commentary while you watch YouTube"
+description = "Live AI commentary on whatever audio is playing in the user's browser tab"
 license = "MIT"
 requires-python = ">=3.11"
 dependencies = [

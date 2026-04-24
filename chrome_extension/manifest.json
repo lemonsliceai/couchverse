@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Watch with Fox & Alien",
-  "version": "1.0.0",
-  "description": "AI comedian companion that watches YouTube with you and delivers real-time comedic commentary on what's playing.",
+  "name": "Couchverse: Live AI Commentary",
+  "version": "1.1.0",
+  "description": "Fox and Alien are your AI co-hosts, reacting in real time to whatever is playing in your browser tab.",
   "permissions": [
     "tabCapture",
     "activeTab",
@@ -12,7 +12,7 @@
     "tabs"
   ],
   "host_permissions": [
-    "https://*.youtube.com/*"
+    "<all_urls>"
   ],
   "side_panel": {
     "default_path": "sidepanel.html"
@@ -22,14 +22,14 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://*.youtube.com/*"],
+      "matches": ["http://*/*", "https://*/*"],
       "js": ["content.js"],
       "run_at": "document_idle",
       "all_frames": false
     }
   ],
   "action": {
-    "default_title": "Watch with Fox & Alien"
+    "default_title": "Couchverse"
   },
   "icons": {
     "16": "icons/icon16.png",
@@ -39,7 +39,7 @@
   "web_accessible_resources": [
     {
       "resources": ["icons/*"],
-      "matches": ["https://*.youtube.com/*"]
+      "matches": ["http://*/*", "https://*/*"]
     }
   ]
 }
