@@ -117,6 +117,39 @@ class SpeechGate:
         handle.add_done_callback(self._on_done)
         return handle
 
+    def say(
+        self,
+        *,
+        text: str,
+        allow_interruptions: bool = False,
+    ) -> SpeechHandle | None:
+        """Speak a static line verbatim (no LLM) and track the handle.
+
+        Mirrors ``speak()`` but goes through ``session.say()`` instead of
+        ``generate_reply``. Used for intros where predictability beats
+        variety — static audio is short (~3-5s), avoids the LLM+TTS+avatar
+        latency spike, and therefore sails under the playout timeout that
+        kicks the LemonSlice multi-avatar ``lk.playback_finished`` fallback.
+        """
+        logger.info(
+            "=== %s SAY (static) ===\n%s\n=== END SAY ===",
+            self._name.upper(),
+            text,
+        )
+        try:
+            handle = self._session.say(
+                text,
+                allow_interruptions=allow_interruptions,
+            )
+        except RuntimeError as exc:
+            if "AgentSession isn't running" in str(exc):
+                logger.debug("%s say skipped — session closed", self._name)
+                return None
+            raise
+        self._current = handle
+        handle.add_done_callback(self._on_done)
+        return handle
+
     def interrupt(self) -> None:
         """Cut off the current turn if there is one.
 

@@ -104,9 +104,11 @@ def _build_session(config: FoxConfig, vad: Any) -> AgentSession:
       * ``resume_false_interruption=False`` — the avatar path sets
         ``audio_output=False``, whose audio sink doesn't implement
         ``.can_pause``; resume would log a warning and no-op.
-      * Session-level ``allow_interruptions`` stays at its default
-        (True). Per-turn we enforce non-interruption via
-        ``SpeechGate.speak``.
+      * ``allow_interruptions=False`` at the session level so VAD-triggered
+        interruption never fires. The ONLY way a persona mid-utterance
+        gets silenced is the user pressing "Skip commentary" — that routes
+        through ``Director._handle_skip`` which calls
+        ``SpeechGate.interrupt(force=True)`` explicitly.
     """
     return AgentSession(
         stt=groq.STT(model=config.stt.model),
@@ -127,6 +129,7 @@ def _build_session(config: FoxConfig, vad: Any) -> AgentSession:
         vad=vad,
         preemptive_generation=False,
         resume_false_interruption=False,
+        allow_interruptions=False,
     )
 
 
@@ -240,6 +243,12 @@ async def entrypoint(ctx: JobContext) -> None:
                 # Avatar audio is routed through LemonSlice — disable the
                 # session's own audio output so it doesn't double-publish.
                 audio_output=False,
+                # Don't auto-close the AgentSession on a participant
+                # disconnect. A brief extension reconnect (tab audio
+                # hiccup, side-panel refresh) would otherwise kill the
+                # session mid-turn. The Director's own disconnect handler
+                # is the single authoritative teardown path.
+                close_on_disconnect=False,
             ),
         )
 

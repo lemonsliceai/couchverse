@@ -20,28 +20,29 @@ import {
 const $ = (sel) => document.querySelector(sel);
 
 // ── API URL ──
-// Unpacked/dev installs hit localhost so anyone cloning this repo can run
-// the whole stack locally without editing code. Chrome Web Store installs
-// hit the hosted production API. If you fork this project and publish your
-// own build to the Web Store, change PROD_API_URL to point at your deployed
-// API.
-const LOCAL_API_URL = "http://localhost:8080";
-const PROD_API_URL = "https://watch-with-fox.fly.dev";
-
-function getApiUrl() {
-  // `update_url` is injected into the manifest automatically for extensions
-  // installed from the Chrome Web Store. It's absent for unpacked/dev loads.
-  const isStoreInstall = "update_url" in chrome.runtime.getManifest();
-  return isStoreInstall ? PROD_API_URL : LOCAL_API_URL;
-}
+// Inlined at build time from `API_URL` in chrome_extension/.env (see
+// build.js + .env.example). Defaults to http://localhost:8080 when unset
+// — fine for unpacked dev loads, but a release build for the Chrome Web
+// Store must set API_URL to a deployed server before bundling.
+const API_URL = __API_URL__;
 
 // ── State ──
 let room = null;
 let activeTabId = null;
 let tabAudioStream = null;
-let tabAudioContext = null;
-let tabAudioGain = null;
-let ducking = false;
+// One AudioContext owns the whole mixing graph: tab audio flows through
+// tabDuckGain → destination, and each avatar voice flows through its own
+// personaNode (MediaElementSource → trim GainNode → destination, with an
+// AnalyserNode tap). The tap signals drive the sidechain envelope follower
+// that controls tabDuckGain — so the tab ducks off the actual voice signal
+// rather than off server-sent start/end events. One shared context is
+// required so the follower (on the voice side) can influence the tab gain.
+let audioCtx = null;
+let tabDuckGain = null;
+// personaName (or participant.identity fallback) → {
+//   source, trimGain, analyser, buffer, audioEl, track
+// }. Built lazily in onTrackSubscribed, torn down in onTrackUnsubscribed.
+const personaNodes = new Map();
 // Guards against a rapid End → Start double-click re-entering the flow
 // while the room is still tearing down. `endSession` holds this across
 // the full `room.disconnect()` promise; `startSession` refuses to run
@@ -49,9 +50,10 @@ let ducking = false;
 // podcast-audio track before the old room's disconnect has reached the
 // server, and the agent briefly sees two user participants.
 let sessionBusy = false;
-// Tracks which personas are currently mid-utterance. Ducking holds while
-// the set is non-empty so back-to-back turns from different speakers don't
-// punch the video back up between them.
+// UI-only: which personas are currently mid-utterance. Drives slot
+// highlighting and Skip button state. Does NOT drive audio ducking —
+// that's signal-driven off the voice analysers, not these events, so a
+// late commentary_end from LemonSlice can't leave the tab stuck ducked.
 const speakingNow = new Set();
 // Per-persona caption history keyed by persona name (e.g. "fox", "chaos_agent").
 const captionsByPersona = new Map();
@@ -60,6 +62,12 @@ const captionsByPersona = new Map();
 // staying on the session screen with no comedians left to chime in.
 const connectedAvatars = new Set();
 let everHadAvatar = false;
+// Personas currently mid-intro. Tracked separately from `speakingNow` so the
+// Skip button can stay disabled during intros — the intro ritual (Fox, then
+// Alien) is non-skippable, and a stray click landing between the two used to
+// cut off Alien's intro. Server-side `SkipCoordinator` also rejects skips on
+// intro-phase personas; this is the client-side belt-and-suspenders.
+const introNow = new Set();
 
 // LemonSlice avatar participants are named lemonslice-avatar-<persona>.
 // Routing decisions in onTrackSubscribed / onActiveSpeakers parse the suffix.
@@ -182,7 +190,7 @@ async function startSession() {
   if (sessionBusy) return;
   const videoUrl = btn.dataset.videoUrl;
   const videoTitle = btn.dataset.videoTitle || "";
-  const apiUrl = getApiUrl();
+  const apiUrl = API_URL;
 
   if (!videoUrl) {
     showError("No active media tab detected");
@@ -196,6 +204,13 @@ async function startSession() {
   hideError();
 
   try {
+    // Build the audio graph now, while we're still synchronously on the
+    // Start-button user gesture. AudioContext creation is allowed in any
+    // context, but an initial resume() must be tied to a gesture to avoid
+    // a "suspended" context that silently drops samples. We also want the
+    // graph to exist before the first avatar track can arrive.
+    initAudioGraph();
+
     // 1. Create session via API
     const session = await createSessionApi(apiUrl, videoUrl, videoTitle);
 
@@ -243,13 +258,9 @@ async function endSession() {
         console.warn("[ext] room.disconnect raised:", err);
       }
     }
-    teardownTabAudio();
-    if (unduckTimer) {
-      clearTimeout(unduckTimer);
-      unduckTimer = null;
-    }
-    ducking = false;
+    teardownAudioGraph();
     speakingNow.clear();
+    introNow.clear();
     updateSkipButton();
     connectedAvatars.clear();
     everHadAvatar = false;
@@ -273,7 +284,7 @@ async function endSession() {
     const btn = $("#start-btn");
     btn.disabled = false;
     btn.classList.remove("loading");
-    btn.textContent = "Watch with Fox";
+    btn.textContent = "Watch with Fox & Alien";
 
     // Re-detect media in the active tab
     detectActiveMedia();
@@ -346,8 +357,8 @@ async function captureAndPublishTabAudio() {
   // turns these on by default, and AGC in particular quietly attenuates loud
   // tab audio to normalize loudness — perceived as a small volume drop the
   // moment capture starts. Turning them off keeps the loopback bit-perfect so
-  // tab volume stays put, and the avatar voices (played through <audio> at
-  // default 1.0 gain) sit at the same reference level as the untouched tab.
+  // tab volume stays put, giving the sidechain duck a stable reference level
+  // to ramp down from.
   tabAudioStream = await navigator.mediaDevices.getUserMedia({
     audio: {
       mandatory: {
@@ -371,21 +382,23 @@ async function captureAndPublishTabAudio() {
   //
   // chrome.tabCapture intercepts the tab's audio output — without this
   // loopback the page would appear to mute the moment we start capturing.
-  // Piping through an AudioContext to `destination` plays the same audio
-  // the agent receives back out through the local speakers. The gain node
-  // is used solely for ducking while Fox is talking; at rest it stays at
-  // 1.0 so the page's own volume is preserved.
-  tabAudioContext = new AudioContext();
-  // Side panels are usually activated by a user gesture, but some Chromium
-  // builds still create the context in "suspended" state. Explicit resume
-  // makes the loopback audible immediately.
-  if (tabAudioContext.state === "suspended") {
-    await tabAudioContext.resume();
+  // Route through the shared AudioContext's tabDuckGain so the sidechain
+  // envelope follower can drive it based on persona voice energy. At rest
+  // tabDuckGain sits at PASSTHROUGH_GAIN so the page's own volume is
+  // preserved bit-for-bit.
+  if (!audioCtx || !tabDuckGain) {
+    // Defensive — initAudioGraph runs before this in startSession, but
+    // if something has torn it down concurrently (e.g. End was clicked
+    // mid-start), skip the Web Audio hookup and publish the raw stream.
+    // The tab will be inaudible locally, but the agent still gets STT.
+    console.warn("[ext] Audio graph missing — tab audio loopback skipped");
+  } else {
+    if (audioCtx.state === "suspended") {
+      await audioCtx.resume().catch(() => {});
+    }
+    const source = audioCtx.createMediaStreamSource(tabAudioStream);
+    source.connect(tabDuckGain);
   }
-  const source = tabAudioContext.createMediaStreamSource(tabAudioStream);
-  tabAudioGain = tabAudioContext.createGain();
-  source.connect(tabAudioGain);
-  tabAudioGain.connect(tabAudioContext.destination);
 
   // 4. Publish the tab audio track to LiveKit.
   //
@@ -419,17 +432,11 @@ async function captureAndPublishTabAudio() {
   );
 }
 
-function teardownTabAudio() {
-  if (tabAudioContext) {
-    try { tabAudioContext.close(); } catch {}
-    tabAudioContext = null;
-    tabAudioGain = null;
-  }
-  if (tabAudioStream) {
-    tabAudioStream.getTracks().forEach((t) => t.stop());
-    tabAudioStream = null;
-  }
-}
+// See initAudioGraph / teardownAudioGraph further down — they own the
+// lifecycle of the shared AudioContext, the sidechain envelope follower,
+// and all per-persona nodes. This module used to have a tab-only variant
+// (teardownTabAudio) but the whole graph is now one unit so there's no
+// reason to tear half of it down separately.
 
 // ── LiveKit Event Handlers ──
 function onTrackSubscribed(track, publication, participant) {
@@ -437,14 +444,16 @@ function onTrackSubscribed(track, publication, participant) {
   const isAvatarTrack =
     personaName !== null || participant.attributes?.["lk.publish_on_behalf"];
 
-  // Audio from non-avatar participants is the persona voice itself
-  // (when published directly without LemonSlice). Pipe it to the audio
-  // container so it's audible even if the avatar pipeline is down.
-  if (!isAvatarTrack && track.kind === Track.Kind.Audio) {
-    const el = track.attach();
-    $("#audio-container").appendChild(el);
+  // All persona voice audio (avatar + the now-dormant direct-publish
+  // fallback) routes through the shared audio graph so the sidechain
+  // envelope follower can see it. Routing key is the persona name when
+  // known, participant identity otherwise.
+  if (track.kind === Track.Kind.Audio) {
+    const key = personaName || `id:${participant.identity}`;
+    attachPersonaAudio(track, key);
     return;
   }
+
   if (!isAvatarTrack) return;
 
   // For avatar tracks we now know which slot they belong to.
@@ -464,16 +473,18 @@ function onTrackSubscribed(track, publication, participant) {
     // transition reads as the preview "animating into" the avatar.
     slot.classList.add("video-live", "breathing");
     spawnReaction(slot, "eyes");
-    return;
-  }
-
-  if (track.kind === Track.Kind.Audio) {
-    const el = track.attach();
-    $("#audio-container").appendChild(el);
   }
 }
 
-function onTrackUnsubscribed(track) {
+function onTrackUnsubscribed(track, publication, participant) {
+  if (track.kind === Track.Kind.Audio) {
+    const personaName = personaFromAvatarIdentity(participant.identity);
+    const key = personaName || `id:${participant.identity}`;
+    if (personaNodes.has(key)) {
+      detachPersonaAudio(key, track);
+      return;
+    }
+  }
   track.detach().forEach((el) => el.remove());
 }
 
@@ -494,30 +505,39 @@ function onDataReceived(payload, participant, kind, topic) {
     return;
   }
 
-  // Commentary lifecycle — authoritative source for ducking and per-slot
-  // speaker highlighting. The Director tags every commentary_start/end
-  // with the persona name so we know which slot lights up.
+  // Commentary lifecycle — drives UI state only (slot highlighting, Skip
+  // button enable). Tab-audio ducking is NOT driven from here; the
+  // sidechain envelope follower watches the actual persona voice signal
+  // and decides for itself. That decoupling is deliberate: LemonSlice's
+  // second-avatar `lk.playback_finished` RPC is flaky (see
+  // server/CLAUDE.md) and a late commentary_end would otherwise leave
+  // the tab stuck ducked — the signal-driven duck recovers on its own
+  // the moment the voice stops producing audio.
   if (topic === "commentary.control" && msg.type === "commentary_start") {
     const personaName = msg.speaker;
+    const phase = msg.phase || "commentary";
     if (personaName) {
-      speakingNow.add(personaName);
+      if (phase === "intro") introNow.add(personaName);
+      else speakingNow.add(personaName);
       const slot = slotFor(personaName);
       slot?.classList.add("speaking");
       spawnReaction(slot, "random");
     }
-    setDucking(true);
     updateSkipButton();
     return;
   }
 
   if (topic === "commentary.control" && msg.type === "commentary_end") {
     const personaName = msg.speaker;
+    const phase = msg.phase || "commentary";
     if (personaName) {
-      speakingNow.delete(personaName);
-      slotFor(personaName)?.classList.remove("speaking");
-    }
-    if (speakingNow.size === 0) {
-      setDucking(false);
+      if (phase === "intro") introNow.delete(personaName);
+      else speakingNow.delete(personaName);
+      // Only drop the "speaking" class if nobody from either set is
+      // still mid-utterance for that persona.
+      if (!speakingNow.has(personaName) && !introNow.has(personaName)) {
+        slotFor(personaName)?.classList.remove("speaking");
+      }
     }
     updateSkipButton();
     return;
@@ -615,10 +635,12 @@ async function syncPlayheadToAgent() {
 
 // ── Skip Commentary ──
 // Tells the agent to cut off whoever's mid-utterance. Button stays disabled
-// until `commentary_start` flips speakingNow non-empty, so a click is always
-// targeting an actual in-flight turn. The agent answers by interrupting each
-// persona's SpeechHandle, which in turn fires `commentary_end` — the normal
-// handler below clears slot highlights and un-ducks.
+// unless a commentary (non-intro) turn is in-flight, so a click always
+// targets a skippable turn. The agent's SkipCoordinator also rejects skips
+// on intro-phase personas; this is client-side enforcement on top. The
+// agent answers by interrupting each eligible persona's SpeechHandle, which
+// in turn fires `commentary_end` — the normal handler above clears slot
+// highlights and un-ducks.
 function skipCommentary() {
   if (speakingNow.size === 0) return;
   publishControl({ type: "skip" }, "podcast.control");
@@ -627,7 +649,9 @@ function skipCommentary() {
 function updateSkipButton() {
   const btn = $("#skip-btn");
   if (!btn) return;
-  btn.disabled = speakingNow.size === 0;
+  // Disabled when nobody is mid-commentary OR when an intro is in-flight —
+  // intros are non-skippable so the Fox → Alien ritual always plays out.
+  btn.disabled = speakingNow.size === 0 || introNow.size > 0;
 }
 
 // ── Pacing controls (Chattiness / Reply length) ──
@@ -725,59 +749,233 @@ async function publishControl(payload, topic) {
   }
 }
 
-// ── Ducking ──
-// When Fox speaks, drop the video to a low but still-audible level rather
-// than muting. Around -12 dB (25%) is the standard range for dialog ducking;
-// going much lower makes the transitions feel dramatic and pump-y. At rest
-// the gain is 1.0 — we never modify the user's own page/system volume.
-const DUCK_GAIN = 0.25;
+// ── Audio graph ──
+//
+// One AudioContext. Two kinds of inputs routed into it:
+//
+//   tab audio          → tabDuckGain ──────────────────────────────┐
+//                                                                  ▼
+//   persona voice #1   → trimGain → ┬→ destination              destination
+//                                   └→ analyser (sidechain tap) ┘
+//   persona voice #2   → trimGain → ┬→ destination
+//                                   └→ analyser (sidechain tap)
+//
+// A rAF envelope follower reads peak RMS across every persona analyser
+// and drives tabDuckGain — tab audio ducks off the *actual* voice signal,
+// not off server events. That's the battle-tested sidechain architecture
+// every broadcast mixer has used for decades; the Web Audio API doesn't
+// expose a native sidechain input (webaudio/web-audio-api#246) so we roll
+// our own envelope follower. Key properties this gets us for free:
+//
+//   * Any persona's voice ducks the tab at the same depth — no per-speaker
+//     tuning needed, and adding a third comedian is zero-config.
+//   * A persona's own voice CANNOT duck itself — avatar audio is on a
+//     different branch from tabDuckGain, by graph construction.
+//   * Late or missing commentary_end events from LemonSlice can't leave
+//     the tab stuck ducked — when the voice stops producing samples,
+//     RMS drops below threshold and the gain releases.
+//   * Per-persona trim normalizes ElevenLabs voice-loudness differences
+//     (Fanz is softer than Dave) without touching the duck logic.
+
 const PASSTHROUGH_GAIN = 1.0;
 
-// Release hold on un-duck. Prevents brief gaps (late commentary_end, dropped
-// packets) from punching the video back up mid-utterance. 600ms is the
-// conventional sweet spot for speech ducking.
-const UNDUCK_RELEASE_MS = 600;
+// RMS threshold above which we consider the persona to be actively
+// speaking. ~0.01 ≈ -40 dB — comfortably above TTS-idle noise floor
+// and well below any real speech energy.
+const DUCK_RMS_THRESHOLD = 0.01;
 
-// Exponential-ramp time constants for the gain node (seconds). Fast attack
-// so Fox isn't stepped on, slower release so the recovery is inaudible.
-// setTargetAtTime uses these as the 63%-of-target time constant.
-const DUCK_ATTACK_TAU = 0.05;
-const DUCK_RELEASE_TAU = 0.25;
+// Depth and time constants for the sidechain duck. Attack is short so
+// the tab drops before the first syllable is stepped on; release is slow
+// enough to ride out breaths without pumping. Hold keeps the duck
+// engaged for a beat after the signal drops below threshold — same
+// purpose the old UNDUCK_RELEASE_MS served, but here the release is a
+// smooth exponential ramp instead of a hard flip.
+const DUCK_TARGET_GAIN = 0.15;   // ~-16 dB
+const DUCK_ATTACK_TAU = 0.05;    // seconds
+const DUCK_RELEASE_TAU = 0.3;    // seconds
+const DUCK_HOLD_MS = 500;
 
-let unduckTimer = null;
+// Per-persona output trim. ElevenLabs voices ship at different reference
+// loudness; this normalizes them at the client so the mix is balanced.
+// Add new personas here as they're introduced.
+const PERSONA_TRIM_GAIN = {
+  fox: 1.0,          // Dave voice — our reference level
+  chaos_agent: 1.6,  // Fanz ships noticeably softer than Dave
+};
+const DEFAULT_PERSONA_TRIM = 1.0;
 
-// Single entry point for toggling the ducking state. On un-duck we hold for
-// UNDUCK_RELEASE_MS before actually releasing, to ride over any short gaps.
-function setDucking(active) {
-  if (active) {
-    if (unduckTimer) {
-      clearTimeout(unduckTimer);
-      unduckTimer = null;
-    }
-    if (!ducking) {
-      ducking = true;
-      applyDucking();
-    }
-    return;
+// Envelope follower state. lastVoiceActiveMs drives the hold; currentDuckTarget
+// lets us skip redundant setTargetAtTime calls when nothing's changing.
+let envelopeFollowerHandle = null;
+let lastVoiceActiveMs = 0;
+let currentDuckTarget = PASSTHROUGH_GAIN;
+
+function initAudioGraph() {
+  if (audioCtx) return;
+  audioCtx = new AudioContext();
+  // Resume is async but must be *initiated* on the user gesture. We
+  // don't await — starting is enough; samples will flow as soon as the
+  // state transitions out of "suspended".
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume().catch((err) =>
+      console.warn("[ext] audioCtx.resume failed:", err)
+    );
   }
-  if (unduckTimer) return;
-  unduckTimer = setTimeout(() => {
-    unduckTimer = null;
-    ducking = false;
-    applyDucking();
-  }, UNDUCK_RELEASE_MS);
+  tabDuckGain = audioCtx.createGain();
+  tabDuckGain.gain.value = PASSTHROUGH_GAIN;
+  tabDuckGain.connect(audioCtx.destination);
+
+  lastVoiceActiveMs = 0;
+  currentDuckTarget = PASSTHROUGH_GAIN;
+  startEnvelopeFollower();
 }
 
-function applyDucking() {
-  if (!tabAudioGain || !tabAudioContext) return;
-  // Ramp the gain exponentially instead of snapping — an instantaneous
-  // .value = x is audible as a click/pump; setTargetAtTime fades smoothly
-  // with no zipper noise.
-  const now = tabAudioContext.currentTime;
-  const target = ducking ? DUCK_GAIN : PASSTHROUGH_GAIN;
-  const tau = ducking ? DUCK_ATTACK_TAU : DUCK_RELEASE_TAU;
-  tabAudioGain.gain.cancelScheduledValues(now);
-  tabAudioGain.gain.setTargetAtTime(target, now, tau);
+function teardownAudioGraph() {
+  stopEnvelopeFollower();
+  for (const name of Array.from(personaNodes.keys())) {
+    detachPersonaAudio(name);
+  }
+  if (tabAudioStream) {
+    tabAudioStream.getTracks().forEach((t) => t.stop());
+    tabAudioStream = null;
+  }
+  if (audioCtx) {
+    try { audioCtx.close(); } catch {}
+    audioCtx = null;
+    tabDuckGain = null;
+  }
+}
+
+// Route a persona's voice track through a (source → trim → destination)
+// chain with an analyser tap for the sidechain. Idempotent on key —
+// calling twice replaces the previous node so late reconnects don't
+// leak disconnected graph nodes.
+function attachPersonaAudio(track, key) {
+  if (personaNodes.has(key)) detachPersonaAudio(key);
+
+  // Keep a muted <audio> element in the DOM purely as a WebRTC receiver
+  // wake-up. Chrome won't pull RTP samples through a remote track unless
+  // something is consuming it, and a playing media element is the cheapest
+  // way to keep the pipe open. The element itself emits no sound — the
+  // graph below drives the speakers via createMediaStreamSource on the
+  // underlying MediaStreamTrack.
+  //
+  // We previously used createMediaElementSource, which is *supposed* to
+  // divert the element's audio into the graph. In a multi-avatar room
+  // the second avatar's source node sometimes failed to divert cleanly:
+  // the element kept playing at its default 1.0 gain through the default
+  // output, while the graph never saw samples. When that bit Alien, the
+  // trim never applied AND the analyser never fired the duck — so Alien
+  // sounded quiet AND the tab stayed loud, which read as Alien "ducking
+  // themself". Pulling from the MediaStreamTrack directly avoids the
+  // divert path entirely and keeps the graph the single source of truth
+  // for what reaches the speakers.
+  const el = track.attach();
+  el.muted = true;
+  $("#audio-container").appendChild(el);
+
+  if (!audioCtx) {
+    // Extreme-edge fallback: graph not ready. Let the element play
+    // directly so the user still hears the comedian; no sidechain input
+    // this session. Better than silence.
+    el.muted = false;
+    return;
+  }
+
+  let source;
+  try {
+    const mediaStream = new MediaStream([track.mediaStreamTrack]);
+    source = audioCtx.createMediaStreamSource(mediaStream);
+  } catch (err) {
+    console.warn("[ext] createMediaStreamSource failed for", key, err);
+    el.muted = false;
+    return;
+  }
+
+  const trimGain = audioCtx.createGain();
+  trimGain.gain.value = PERSONA_TRIM_GAIN[key] ?? DEFAULT_PERSONA_TRIM;
+
+  const analyser = audioCtx.createAnalyser();
+  // 1024 samples ≈ 21ms at 48kHz — a whole syllable fits, so RMS reads
+  // smoothly without needing heavy smoothing constants.
+  analyser.fftSize = 1024;
+  analyser.smoothingTimeConstant = 0.1;
+  const buffer = new Float32Array(analyser.fftSize);
+
+  source.connect(trimGain);
+  trimGain.connect(audioCtx.destination);
+  // Sidechain tap — post-trim so the envelope follower sees
+  // user-perceived loudness (same level the listener hears). Post-trim
+  // also means a mis-set trim can't leave the duck silently mistuned.
+  trimGain.connect(analyser);
+
+  personaNodes.set(key, { source, trimGain, analyser, buffer, audioEl: el, track });
+}
+
+function detachPersonaAudio(key, track) {
+  const node = personaNodes.get(key);
+  if (!node) return;
+  try { node.source.disconnect(); } catch {}
+  try { node.trimGain.disconnect(); } catch {}
+  try { node.analyser.disconnect(); } catch {}
+  const t = track || node.track;
+  try { t?.detach(node.audioEl); } catch {}
+  node.audioEl.remove();
+  personaNodes.delete(key);
+}
+
+// ── Sidechain envelope follower ──
+//
+// Runs per animation frame. Reads peak RMS across all persona analysers
+// (max, not sum — two quiet voices shouldn't duck deeper than one loud
+// voice), compares to threshold + hold window, drives tabDuckGain.
+//
+// rAF is the right scheduler here: the side panel is always visible
+// during an active session (closing it ends the session), so we don't
+// hit the background-tab throttling that would otherwise be a concern.
+// Upgrading to an AudioWorklet would buy us frame-accurate response in
+// exchange for a separate worklet module — not worth it yet.
+function startEnvelopeFollower() {
+  if (envelopeFollowerHandle) return;
+  const tick = () => {
+    envelopeFollowerHandle = requestAnimationFrame(tick);
+    if (!audioCtx || !tabDuckGain) return;
+
+    let peakRms = 0;
+    for (const node of personaNodes.values()) {
+      node.analyser.getFloatTimeDomainData(node.buffer);
+      let sumSquares = 0;
+      for (let i = 0; i < node.buffer.length; i++) {
+        const s = node.buffer[i];
+        sumSquares += s * s;
+      }
+      const rms = Math.sqrt(sumSquares / node.buffer.length);
+      if (rms > peakRms) peakRms = rms;
+    }
+
+    const now = performance.now();
+    const aboveThreshold = peakRms > DUCK_RMS_THRESHOLD;
+    if (aboveThreshold) lastVoiceActiveMs = now;
+    // Hold keeps the duck engaged through breaths / brief inter-word
+    // gaps so the tab doesn't pump back up mid-sentence. The release
+    // TAU handles the smooth ramp once we actually decide to let go.
+    const shouldDuck = aboveThreshold || (now - lastVoiceActiveMs) < DUCK_HOLD_MS;
+    const target = shouldDuck ? DUCK_TARGET_GAIN : PASSTHROUGH_GAIN;
+    if (target === currentDuckTarget) return;
+
+    const tau = shouldDuck ? DUCK_ATTACK_TAU : DUCK_RELEASE_TAU;
+    tabDuckGain.gain.cancelScheduledValues(audioCtx.currentTime);
+    tabDuckGain.gain.setTargetAtTime(target, audioCtx.currentTime, tau);
+    currentDuckTarget = target;
+  };
+  envelopeFollowerHandle = requestAnimationFrame(tick);
+}
+
+function stopEnvelopeFollower() {
+  if (envelopeFollowerHandle) {
+    cancelAnimationFrame(envelopeFollowerHandle);
+    envelopeFollowerHandle = null;
+  }
 }
 
 // ── Captions (Speech Bubbles) ──

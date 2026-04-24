@@ -27,13 +27,21 @@ BURST_COOLDOWN = CONFIG.timing.burst_cooldown_s
 SENTENCE_THRESHOLD = CONFIG.timing.sentences_before_joke
 
 
+# Includes CJK full-width terminators (。！？) and the horizontal ellipsis.
+# Without the CJK glyphs the sentence-threshold trigger never fires for
+# non-Latin podcasts and we end up leaning entirely on the silence-fallback
+# loop — which has its own failure modes.
+_SENTENCE_TERMINATORS = re.compile(r"[.!?。！？…]")
+
+
 def count_sentences(text: str) -> int:
     """Count sentence-ending punctuation marks in Whisper output.
 
     Whisper-large-v3-turbo reliably punctuates transcripts, so counting
-    occurrences of . ? ! is a reasonable proxy for sentence boundaries.
+    sentence-terminating glyphs is a reasonable proxy for sentence
+    boundaries.
     """
-    return len(re.findall(r"[.!?]", text))
+    return len(_SENTENCE_TERMINATORS.findall(text))
 
 
 class CommentaryTimer:

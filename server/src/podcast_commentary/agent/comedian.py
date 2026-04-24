@@ -23,9 +23,9 @@ from __future__ import annotations
 
 import asyncio
 import enum
-import json
 import logging
 import random
+import re
 from collections.abc import AsyncIterable, Awaitable, Callable
 from typing import Any
 
@@ -114,8 +114,58 @@ def _chunk_text(chunk: Any) -> str:
     return ""
 
 
+# Primary VS format: one candidate per line as ``<p>|<line>``. Only the FIRST
+# `|` splits — anything after it is part of the line (commas, quotes, further
+# pipes all welcome). Reduces escaping to zero, which is the whole point.
+_LINE_CANDIDATE_RE = re.compile(r"^\s*([01](?:\.\d+)?|\.\d+|0|1)\s*\|\s*(.+?)\s*$")
+
+# Last-ditch recovery when the model ignores the format and returns JSON-ish
+# text instead. Regex-based (not ``json.loads``) so malformed JSON — the
+# actual reason we moved off JSON — still yields usable lines.
+_JSON_LINE_RE = re.compile(r'"line"\s*:\s*"((?:[^"\\]|\\.)*)"')
+_JSON_P_RE = re.compile(r'"p"\s*:\s*([0-9.]+)')
+
+
+def _parse_line_delimited(payload: str) -> list[tuple[float, str]]:
+    out: list[tuple[float, str]] = []
+    for row in payload.splitlines():
+        m = _LINE_CANDIDATE_RE.match(row)
+        if m is None:
+            continue
+        try:
+            p = float(m.group(1))
+        except ValueError:
+            p = 0.0
+        line = m.group(2).strip()
+        if len(line) >= 2 and line[0] == line[-1] and line[0] in {'"', "'"}:
+            line = line[1:-1].strip()
+        if line:
+            out.append((p, line))
+    return out
+
+
+def _parse_json_fallback(payload: str) -> list[tuple[float, str]]:
+    lines = _JSON_LINE_RE.findall(payload)
+    probs = _JSON_P_RE.findall(payload)
+    out: list[tuple[float, str]] = []
+    for i, raw_line in enumerate(lines):
+        try:
+            p = float(probs[i]) if i < len(probs) else 0.0
+        except ValueError:
+            p = 0.0
+        line = raw_line.replace('\\"', '"').replace("\\\\", "\\").strip()
+        if line:
+            out.append((p, line))
+    return out
+
+
 def _select_candidate(raw: str, strategy: str) -> str:
-    """Parse the VS JSON envelope and pick one candidate's ``line``."""
+    """Pick one candidate line from the verbalized-sampling response.
+
+    Never returns the raw model output: on total parse failure we return
+    ``""`` so the caller pipes silence to TTS instead of making the avatar
+    recite the format envelope out loud (the 80-second JSON-soliloquy bug).
+    """
     payload = raw.strip()
     if payload.startswith("```"):
         payload = payload.strip("`")
@@ -123,36 +173,27 @@ def _select_candidate(raw: str, strategy: str) -> str:
             payload = payload[4:]
         payload = payload.strip()
 
-    try:
-        data = json.loads(payload)
-        candidates = data["candidates"]
-        if not candidates:
-            raise ValueError("empty candidates array")
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
-        logger.warning("VS parse failed (%s) — falling back to raw text", exc)
-        return raw.strip()
+    candidates = _parse_line_delimited(payload)
+    if not candidates:
+        candidates = _parse_json_fallback(payload)
 
-    for c in candidates:
-        try:
-            c["p"] = float(c.get("p", 0.0))
-        except (TypeError, ValueError):
-            c["p"] = 0.0
+    if not candidates:
+        logger.warning(
+            "VS parse recovered 0 candidates — dropping turn (preview=%r)",
+            payload[:200],
+        )
+        return ""
 
     if strategy == "top_k_random":
-        top = sorted(candidates, key=lambda c: c["p"], reverse=True)[:3]
-        winner = random.choice(top)
+        top = sorted(candidates, key=lambda c: c[0], reverse=True)[:3]
+        p, line = random.choice(top)
     else:
-        winner = max(candidates, key=lambda c: c["p"])
-
-    line = (winner.get("line") or "").strip()
-    if not line:
-        logger.warning("VS winner had empty line — falling back to raw text")
-        return raw.strip()
+        p, line = max(candidates, key=lambda c: c[0])
 
     logger.info(
         "VS picked candidate (strategy=%s, p=%.2f, of %d): %s",
         strategy,
-        winner["p"],
+        p,
         len(candidates),
         line[:120],
     )
@@ -303,11 +344,16 @@ class PersonaAgent(Agent):
     def speak_intro(self) -> Any:
         """Deliver this persona's intro line. Director calls at most once.
 
-        Returns the SpeechHandle so the Director can ``wait_for_playout``
-        with its own timeout safety net.
+        Speaks a static, pre-authored line via ``session.say`` rather than
+        going through the LLM. Intros are the most load-bearing beat of the
+        show (first impression, sequenced across personas) and must be
+        reliable — static audio is short and predictable, which keeps it
+        well inside the playout-timeout window that triggers our LemonSlice
+        multi-avatar RPC fallback. Returns the SpeechHandle so the Director
+        can ``wait_for_playout`` with its own timeout safety net.
         """
         self._set_phase(FoxPhase.INTRO)
-        return self.gate.speak(prompt=self._config.persona.intro_prompt)
+        return self.gate.say(text=self._config.persona.intro_line)
 
     async def deliver_commentary(
         self,
@@ -366,7 +412,7 @@ class PersonaAgent(Agent):
             length_hint=self._length_hint,
         )
         self._set_phase(FoxPhase.REPLYING)
-        return self.gate.speak(prompt=prompt, allow_interruptions=True)
+        return self.gate.speak(prompt=prompt)
 
     def interrupt(self) -> None:
         """Cut off the current turn if any. Safe to call from any thread."""
@@ -493,14 +539,21 @@ class PersonaAgent(Agent):
                 self._on_speech_start_cb(self)
             except Exception:
                 logger.debug("on_speech_start callback raised", exc_info=True)
-        if finished and self._on_speech_end_cb is not None:
-            try:
-                self._on_speech_end_cb(self)
-            except Exception:
-                logger.debug("on_speech_end callback raised", exc_info=True)
-            # Belt-and-suspenders phase reset for avatar playout hangs.
+        if finished:
+            # Phase reset BEFORE the Director callback. The Director's
+            # `_on_persona_speech_end` checks `_room_is_listening()` to
+            # decide whether to re-arm the silence loop — and that check
+            # demands every persona be in LISTENING. Calling the callback
+            # first leaves us in COMMENTATING/REPLYING/INTRO, the gate
+            # fails, and the silence loop never re-arms (compounding the
+            # bug where the loop dies on early-return).
             if self._phase in (FoxPhase.INTRO, FoxPhase.COMMENTATING, FoxPhase.REPLYING):
                 self._on_speech_released()
+            if self._on_speech_end_cb is not None:
+                try:
+                    self._on_speech_end_cb(self)
+                except Exception:
+                    logger.debug("on_speech_end callback raised", exc_info=True)
 
     def _on_conversation_item_added(self, ev: Any) -> None:
         """Capture finalised assistant messages — local history + Director hook."""

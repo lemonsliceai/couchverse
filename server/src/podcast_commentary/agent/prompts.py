@@ -61,6 +61,11 @@ def _sampling_instruction(config: FoxConfig) -> str | None:
     Persona-neutral: never says "joke" or "punchline" — each preset's own
     system prompt + CTA decide what a ``line`` is. Returns None when VS
     is off so the block is omitted from the prompt entirely.
+
+    Format is line-delimited ``p|line`` — one candidate per line. Simpler
+    than JSON for the model (no escaping of quotes, commas, apostrophes
+    inside the line) and simpler for us to parse defensively when the
+    model strays.
     """
     n = config.sampling.num_candidates
     if n <= 1:
@@ -68,11 +73,16 @@ def _sampling_instruction(config: FoxConfig) -> str | None:
     return (
         f"{SAMPLING_SENTINEL}\n"
         f"[OUTPUT FORMAT — pipeline spec, not creative direction]\n"
-        f"Return strict JSON only — no prose, no markdown fences: "
-        f'{{"candidates":[{{"line":"...","p":0.0}}]}}\n'
-        f"Produce exactly {n} candidates. Each `line` is a complete response "
-        f"written to the rules above. `p` is your own confidence (0.0-1.0) "
-        f"that this candidate lands best. Stay in character across all of them."
+        f"Return exactly {n} candidates, one per line. No prose, no preamble, "
+        f"no blank lines, no numbering, no markdown fences. Each line is:\n"
+        f"<p>|<line>\n"
+        f"where <p> is your confidence (0.0-1.0) that this candidate lands "
+        f"best and <line> is a complete response written to the rules above. "
+        f"The first `|` is the separator; any further `|` belong to the line. "
+        f"Stay in character across all of them.\n"
+        f"Example (format only — write your own lines):\n"
+        f"0.9|Ah yes, disrupting the industry of already having a notes app.\n"
+        f"0.6|They just described a CRUD app like it was the Manhattan Project."
     )
 
 

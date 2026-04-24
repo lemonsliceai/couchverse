@@ -24,11 +24,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger("podcast-commentary.selector")
 
 
-# Sentinel returned when the selector LLM decides nobody should speak (e.g.
-# mid-sentence podcast pause). Callers compare against ``SKIP`` rather than
-# matching the literal string so the contract stays explicit.
-SKIP = "skip"
-
 # Hard cap on the selector call. Missing this window falls back to
 # round-robin — better a slightly-wrong pick than dead air.
 _PICK_TIMEOUT_S = 2.5
@@ -36,16 +31,14 @@ _PICK_TIMEOUT_S = 2.5
 _SELECTOR_SYSTEM = (
     "You are the show director for a multi-persona AI commentary track on top "
     "of a podcast. Your only job is to pick which comedian persona should "
-    "speak next, or to skip the turn entirely.\n\n"
+    "speak next. Someone ALWAYS speaks — skipping is not an option.\n\n"
     "Optimise for what would be FUNNIEST and MOST VARIED for the audience:\n"
     "- prefer the persona whose voice has been quiet recently\n"
     "- prefer the persona whose comedic lane fits the current transcript\n"
-    "- if the same persona just spoke and the moment doesn't *demand* their "
-    "voice again, switch — back-to-back-to-back from one speaker is dull\n"
-    "- if the transcript is mid-thought or doesn't give either persona "
-    "anything to land on, return skip — silence is funnier than a stretch\n\n"
+    "- if the same persona just spoke, switch — back-to-back-to-back from "
+    "one speaker is dull\n\n"
     "Reply with strict JSON only: "
-    '{"speaker":"<persona-name>"|"skip","reason":"<one short clause>"}.\n'
+    '{"speaker":"<persona-name>","reason":"<one short clause>"}.\n'
     "Use the lowercase `name` field from the candidate block, NOT the label. "
     "No prose, no markdown, no extra keys."
 )
@@ -67,13 +60,14 @@ class SpeakerSelector:
         last_speaker: str | None,
         consecutive_count: int,
     ) -> str:
-        """Return a persona name to speak, or ``SKIP``.
+        """Return a persona name to speak. Never skips — the show must go on.
 
         Strategy:
           1. Filter out personas over the consecutive-turn cap.
           2. If only one remains, pick it (LLM is overkill).
           3. Otherwise ask the LLM with a short timeout. Fall back to
-             round-robin on any failure.
+             round-robin on any failure (including a SKIP from a stale
+             prompt cache).
         """
         eligible = [p for p in personas if self._is_eligible(p, last_speaker, consecutive_count)]
         if not eligible:
@@ -159,11 +153,12 @@ class SpeakerSelector:
             last_line = f"\nLAST SPEAKER: {last_speaker}{count_note}"
 
         return (
-            "Pick which persona speaks next, or skip the turn.\n\n"
+            "Pick which persona speaks next. Someone MUST speak — skipping "
+            "is not an option.\n\n"
             f"RECENT TRANSCRIPT:\n{transcript or '(silent)'}\n\n"
             f"TRIGGER: {trigger_reason}{last_line}\n\n"
             + "\n\n".join(candidates_block)
-            + '\n\nRespond with strict JSON: {"speaker":"<name>"|"skip","reason":"..."}'
+            + '\n\nRespond with strict JSON: {"speaker":"<name>","reason":"..."}'
         )
 
     def _parse_response(
@@ -184,14 +179,13 @@ class SpeakerSelector:
             logger.warning("Selector LLM produced invalid JSON: %r", raw[:120])
             return self._round_robin(eligible, last_speaker).name
 
-        if speaker == SKIP:
-            logger.info("Selector picked SKIP (%s)", reason)
-            return SKIP
         if any(p.name == speaker for p in eligible):
             logger.info("Selector picked %s (%s)", speaker, reason)
             return speaker
-        logger.warning("Selector picked %r which isn't eligible — falling back", speaker)
+        # Stale prompt caches or a hallucinated "skip" both land here —
+        # the contract is now that someone always speaks, so fall back.
+        logger.warning("Selector picked %r which isn't eligible — round-robin fallback", speaker)
         return self._round_robin(eligible, last_speaker).name
 
 
-__all__ = ["SKIP", "SpeakerSelector"]
+__all__ = ["SpeakerSelector"]

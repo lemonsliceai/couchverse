@@ -67,6 +67,11 @@ When your friend speaks: drop the chaos by HALF, not all the way. Acknowledge th
 One line. Hook the transcript. Derail from it. Disappear."""
 
 
+INTRO_LINE = (
+    "Hi. I'm Alien. My antennae are tingling but I'm sure it's fine. Let's watch the video."
+)
+
+
 INTRO_PROMPT = (
     "Introduce yourself in one slightly off sentence. You're Alien — small, "
     "blue, antennaed, and something is wrong with you that you're not going "
@@ -117,6 +122,7 @@ CONFIG = FoxConfig(
     name="chaos_agent",
     persona=PersonaConfig(
         system_prompt=SYSTEM_PROMPT,
+        intro_line=INTRO_LINE,
         intro_prompt=INTRO_PROMPT,
         comedic_angles=COMEDIC_ANGLES,
         # 4 lenses, exclude last 2 → always 2 fresh options, no immediate repeats.
@@ -185,11 +191,14 @@ CONFIG = FoxConfig(
             "about to derail the conversation"
         ),
         startup_timeout_s=15.0,
-        avatar_url="https://podcast-commentary-api.fly.dev/static/alien.jpg",
+        avatar_image="alien.jpg",
     ),
     playout=PlayoutConfig(
-        intro_timeout_s=8.0,
-        commentary_timeout_s=12.0,
+        # Alien is the second avatar and bears the brunt of the LemonSlice
+        # multi-avatar ``lk.playback_finished`` RPC flakiness — generous
+        # headroom keeps the synthesized fallback from firing mid-audio.
+        intro_timeout_s=25.0,
+        commentary_timeout_s=20.0,
     ),
     # Verbalized sampling (advanced): chaos uses top_k_random over 6 so
     # even when the model converges on a "safe" derail, we shake one of

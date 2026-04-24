@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     # LemonSlice — avatar rendering
     LEMONSLICE_API_KEY: str | None = None
 
+    # Public base URL that hosts the avatar images (e.g. your Fly.io host
+    # or an ngrok tunnel). LemonSlice Cloud fetches the images from its
+    # own servers so localhost won't work. Combined with each preset's
+    # ``AvatarConfig.avatar_image`` to form the final URL. Leave unset
+    # to run without avatars.
+    AVATAR_BASE_URL: str | None = None
+
     # Server
     HOST: str = "0.0.0.0"
     PORT: int = 8080

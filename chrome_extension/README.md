@@ -105,26 +105,28 @@ curl http://localhost:8080/health
 1. Navigate to any YouTube video (e.g. `youtube.com/watch?v=...`)
 2. Click the **Watch with Fox** extension icon in the toolbar — the side panel opens
 3. The extension auto-detects the video URL and thumbnail
-4. The API URL field defaults to `http://localhost:8080` when the extension is loaded unpacked, so no change is needed for local development
-5. Click **Watch with Fox** to start
+4. Click **Watch with Fox** to start
 6. Fox's avatar appears in the side panel and begins listening + commenting
 7. Use **Hold to talk** to speak to Fox directly
 8. Adjust **Video** and **Fox** volume sliders as needed
 
-### API URL — local vs. production
+### Configuring the API URL
 
-The side panel picks its default API URL based on how the extension was installed:
+The extension talks to one API server, baked into the bundle at build time from `API_URL`. There is no runtime toggle — every build embeds exactly one URL, which is what install you're running gets.
 
-| Install type | Default API URL | Use case |
-|---|---|---|
-| **Unpacked** (`Load unpacked` in `chrome://extensions`) | `http://localhost:8080` | Local development — anyone who clones this repo gets a working local setup out of the box |
-| **Chrome Web Store** | `https://watch-with-fox.fly.dev` | Normal users installing the published extension |
+| Goal | Setup |
+|---|---|
+| Local development (default) | No `.env` needed. `npm run build` bundles `http://localhost:8080`. |
+| Test against a deployed API from an unpacked load | Set `API_URL` in `chrome_extension/.env`, rebuild, reload the unpacked extension. |
+| Publish your own Web Store build | Same as above — set `API_URL` to your deployed server, then build and zip. |
 
-Detection uses `chrome.runtime.getManifest().update_url`, which the Chrome Web Store injects automatically at install time and is absent for unpacked loads.
+`chrome_extension/.env` is gitignored (covered by the root `.gitignore`). `chrome_extension/.env.example` is the template. You can also pass the URL inline for one-off builds:
 
-You can override the default by editing the **API URL** field on the setup screen — the value is persisted in `chrome.storage.local`. Clearing the field (or retyping the default) removes the override and reverts to the install-type default.
+```bash
+API_URL=https://your-api.fly.dev npm run build
+```
 
-If you fork this project and publish your own build to the Chrome Web Store, update `PROD_API_URL` in `src/sidepanel.js` to point at your deployed API before building.
+The build logs the embedded URL on every run (`Build complete: ... (API_URL=...)`) and warns when it falls back to localhost, so an accidental localhost release bundle is loud.
 
 ## How it works
 

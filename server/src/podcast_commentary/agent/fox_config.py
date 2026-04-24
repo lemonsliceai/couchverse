@@ -37,6 +37,13 @@ class PersonaConfig:
     """The words Fox uses: system prompt, intro, CTAs, comedic angles."""
 
     system_prompt: str
+    # Static intro line — spoken verbatim via ``session.say`` so intros are
+    # short, predictable, and immune to the LemonSlice multi-avatar
+    # ``lk.playback_finished`` RPC flakiness that bites the longer
+    # LLM-generated intros. Intros should be the most reliable thing in
+    # the show — use ``intro_prompt`` for variant presets that can afford
+    # to generate.
+    intro_line: str
     intro_prompt: str
     comedic_angles: tuple[str, ...]
     angle_lookback: int
@@ -101,10 +108,19 @@ class AvatarConfig:
     active_prompt: str
     idle_prompt: str
     startup_timeout_s: float
-    # Publicly reachable URL for this persona's avatar image. LemonSlice
-    # Cloud fetches it from its servers, so ``localhost`` is rejected —
-    # use the deployed Fly.io host or an ngrok tunnel during dev.
-    avatar_url: str = ""
+    # Filename of this persona's avatar image served under ``/static/``
+    # (e.g. ``"fox_2x3.jpg"``). The full URL is built by joining
+    # ``settings.AVATAR_BASE_URL`` with this filename — see
+    # ``AvatarConfig.avatar_url``.
+    avatar_image: str = ""
+
+    @property
+    def avatar_url(self) -> str:
+        """Full URL LemonSlice will fetch. Empty when disabled."""
+        base = settings.AVATAR_BASE_URL
+        if not base or not self.avatar_image:
+            return ""
+        return f"{base.rstrip('/')}/static/{self.avatar_image}"
 
 
 @dataclass(frozen=True)

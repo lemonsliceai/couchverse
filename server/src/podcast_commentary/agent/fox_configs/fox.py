@@ -54,6 +54,11 @@ When your friend speaks: drop the roast, riff WITH them. All snark aims at the v
 One line. One laugh. Shut up."""
 
 
+INTRO_LINE = (
+    "Hey, I'm Fox. Pull up a couch — let's see what fresh catastrophe they're pitching today."
+)
+
+
 INTRO_PROMPT = (
     "Introduce yourself briefly. You're Fox, about to watch a "
     "video with the user. Keep it to one short, playful sentence."
@@ -95,6 +100,7 @@ CONFIG = FoxConfig(
     name="fox",
     persona=PersonaConfig(
         system_prompt=SYSTEM_PROMPT,
+        intro_line=INTRO_LINE,
         intro_prompt=INTRO_PROMPT,
         comedic_angles=COMEDIC_ANGLES,
         # With 3 lenses and 1 excluded, Fox always has 2 fresh options —
@@ -162,11 +168,15 @@ CONFIG = FoxConfig(
             "an anthropomorphic fox listening intently with occasional subtle reactions and smirks"
         ),
         startup_timeout_s=15.0,
-        avatar_url="https://podcast-commentary-api.fly.dev/static/fox_2x3.jpg",
+        avatar_image="fox_2x3.jpg",
     ),
     playout=PlayoutConfig(
-        intro_timeout_s=8.0,
-        commentary_timeout_s=12.0,
+        # Static-say intros are 3-5s of audio, but the LemonSlice multi-avatar
+        # ``lk.playback_finished`` RPC can arrive well after audio finishes
+        # (see livekit/agents #3510). Generous headroom so the synthesized
+        # fallback never fires mid-audio during the critical startup path.
+        intro_timeout_s=25.0,
+        commentary_timeout_s=20.0,
     ),
     # Verbalized sampling (advanced): generate N candidates per turn, pick
     # the highest self-rated one. Fights RLHF mode collapse on creative

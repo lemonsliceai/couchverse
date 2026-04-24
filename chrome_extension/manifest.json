@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Watch with Fox",
+  "name": "Watch with Fox & Alien",
   "version": "1.0.0",
   "description": "AI comedian companion that watches YouTube with you and delivers real-time comedic commentary on what's playing.",
   "permissions": [
@@ -29,7 +29,7 @@
     }
   ],
   "action": {
-    "default_title": "Watch with Fox"
+    "default_title": "Watch with Fox & Alien"
   },
   "icons": {
     "16": "icons/icon16.png",

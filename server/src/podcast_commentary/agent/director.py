@@ -18,8 +18,8 @@ Speaker selection is a small fast LLM call (``DIRECTOR_LLM_MODEL``,
 defaults to the same Groq Llama as the comedians). The judge sees the
 recent transcript, what each persona said last, who spoke most recently,
 and is told to optimise for "what would be funniest right now". It
-returns ``{"speaker": "<name>" | "skip", "reason": "..."}``. Safety
-rails on top:
+returns ``{"speaker": "<name>", "reason": "..."}`` — someone always
+speaks, skipping is not a valid outcome. Safety rails on top:
 
   * a hard cap on consecutive same-speaker turns (``DIRECTOR_MAX_CONSECUTIVE``)
   * a fallback to round-robin when the LLM call fails or returns garbage
@@ -37,6 +37,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -51,7 +52,8 @@ from podcast_commentary.agent.commentary import (
 )
 from podcast_commentary.agent.fox_config import CONFIG
 from podcast_commentary.agent.podcast_pipeline import PodcastPipeline
-from podcast_commentary.agent.selector import SKIP, SpeakerSelector
+from podcast_commentary.agent.selector import SpeakerSelector
+from podcast_commentary.agent.skip_coordinator import SkipCoordinator
 from podcast_commentary.agent.user_turn import UserTurnTracker
 from podcast_commentary.core.config import settings
 from podcast_commentary.core.db import log_conversation_message
@@ -70,13 +72,13 @@ COMMENTARY_PLAYOUT_TIMEOUT = CONFIG.playout.commentary_timeout_s
 
 # Chattiness presets from the UI. Each entry scales MIN_GAP (the cool-down
 # between turns) and the silence-fallback delay (how long a quiet stretch
-# goes before anyone steps in). "normal" leaves the config-derived defaults
-# untouched; the multipliers on either side are deliberately wide so users
-# can feel the dial move.
+# goes before anyone steps in). With MIN_GAP=10s, this lands the gap at
+# ~5s / ~10s / ~15s for Chatty / Normal / Quiet — "normal" leaves the
+# config-derived defaults untouched.
 _FREQUENCY_PRESETS: dict[str, tuple[float, float]] = {
-    "quiet": (0.45, 0.5),
-    "normal": (0.3375, 0.375),
-    "chatty": (0.225, 0.25),
+    "quiet": (1.5, 1.5),
+    "normal": (1.0, 1.0),
+    "chatty": (0.5, 0.5),
 }
 
 
@@ -91,6 +93,26 @@ def _log_task_exception(task: asyncio.Task) -> None:
 # Avatar participants publish under this identity prefix (see main.py
 # `_avatar_identity_for`). Everything else disconnecting is the user.
 _AVATAR_IDENTITY_PREFIX = "lemonslice-avatar-"
+
+
+# Kickoff delay after intros complete before the Director forces the first
+# commentary turn. Short enough that the post-intro silence doesn't feel
+# like dead air; long enough that the STT pipeline has had a moment to
+# process whatever the video was saying over the intro.
+_POST_INTRO_KICKOFF_DELAY_S: float = 3.0
+
+
+# Watchdog cadence — if no commentary turn has landed within this window
+# and the room is listening, force one. Guarantees forward progress even
+# under pathological conditions (silence loop died, selector loop, stuck
+# phase) where the normal path would never re-arm.
+#
+# 15s sits comfortably above the longest silence_fallback_delay
+# (~18s in Quiet × 1.5x scale would push it close, but the silence loop
+# is now self-rescheduling so the watchdog only fires when something is
+# truly broken). Previously 30s — too long for chatty mode, where 30s of
+# dead air is conspicuous.
+_WATCHDOG_INTERVAL_S: float = 15.0
 
 
 class Director:
@@ -149,6 +171,11 @@ class Director:
             max_consecutive=settings.DIRECTOR_MAX_CONSECUTIVE,
         )
 
+        # Phase-aware skip handling. Centralises the "which personas can
+        # the Skip button cut off?" policy so intros (and idle LISTENING)
+        # can never be interrupted by a stray click.
+        self._skip = SkipCoordinator(personas)
+
         # Per-room scheduling state.
         self._last_speaker: str | None = None
         self._consecutive_count: int = 0
@@ -174,6 +201,15 @@ class Director:
         # The timer owns its own `min_gap` field; we keep the silence-fallback
         # delay here because only the Director consults it.
         self._silence_fallback_delay: float = SILENCE_FALLBACK_DELAY
+
+        # Watchdog bookkeeping. ``_last_turn_time`` is the monotonic
+        # timestamp of the most recent commentary turn (intro doesn't
+        # count). The watchdog fires a forced turn if this drifts past
+        # ``_WATCHDOG_INTERVAL_S`` — kills any edge-case deadlock where
+        # the silence loop, selector, or a stuck phase kept the room
+        # mute despite being marked LISTENING.
+        self._last_turn_time: float = time.monotonic()
+        self._watchdog_task: asyncio.Task | None = None
 
         # Wire each persona's events back to us.
         for p in personas:
@@ -206,6 +242,11 @@ class Director:
         # Once intros land, the silence-fallback loop carries us through
         # quiet stretches.
         self._schedule_silence_fallback()
+        # Short forced first turn so the pair doesn't stall in the quiet
+        # window between intros ending and the silence loop's first wake.
+        self._fire_and_forget(self._post_intro_kickoff(), name="director_kickoff")
+        # Watchdog guarantees forward progress even if every other path fails.
+        self._watchdog_task = self._fire_and_forget(self._watchdog_loop(), name="director_watchdog")
 
     async def shutdown(self) -> None:
         """Tear down all Director-owned work. Idempotent.
@@ -227,6 +268,8 @@ class Director:
         # Stop scheduling new work.
         if self._silence_task is not None and not self._silence_task.done():
             self._silence_task.cancel()
+        if self._watchdog_task is not None and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
 
         # Interrupt anyone mid-utterance so the framework's
         # `clear_buffer` RPC fires while the room transport is still up.
@@ -367,8 +410,12 @@ class Director:
         Delegates to ``_wait_for_playout_robust`` so a missing vendor
         ``lk.playback_finished`` RPC can't hang the room — see that
         method's docstring for the full recovery strategy.
+
+        Tags the start/end packets with ``phase: "intro"`` so the client
+        can force its Skip button disabled during intros — belt-and-
+        suspenders on top of the server-side ``SkipCoordinator`` filter.
         """
-        await self._publish_commentary_start(persona.name)
+        await self._publish_commentary_start(persona.name, phase="intro")
         try:
             handle = persona.speak_intro()
             if handle is None:
@@ -377,7 +424,7 @@ class Director:
                 persona, handle, timeout=INTRO_PLAYOUT_TIMEOUT, label="intro"
             )
         finally:
-            await self._publish_commentary_end(persona.name)
+            await self._publish_commentary_end(persona.name, phase="intro")
 
     # ==================================================================
     # Robust playout wait — shared by intro / commentary / user-reply
@@ -559,20 +606,72 @@ class Director:
         )
 
     async def _silence_fallback_loop(self) -> None:
-        await asyncio.sleep(self._silence_fallback_delay)
-        if self._shutting_down:
-            return
-        # Self-heal on any transient "can't speak right now" state — a hung
-        # avatar can leave a persona stuck in INTRO/COMMENTATING for tens of
-        # seconds, and if we let the loop die here `_on_persona_speech_end`
-        # may never fire to re-arm us, killing commentary permanently.
-        if not self._room_is_listening() or not self._full_transcript.has_content():
-            self._schedule_silence_fallback()
+        """Recurring silence-detection loop.
+
+        Sleeps ``_silence_fallback_delay`` and tries to deliver. The
+        critical invariant: this loop must NEVER terminate via early-return
+        while the room is still alive, otherwise a quiet stretch with no
+        ``_on_persona_speech_end`` re-arm (e.g. cooldown / min_gap window
+        expiring with nobody about to speak) leaves the show permanently
+        mute. Bug history: the loop used to fire once and exit on any
+        ineligibility check, so a Chinese podcast (sentence-trigger never
+        fires) plus a min_gap miss after Fox's first turn produced 52s of
+        dead air before the watchdog saved it.
+        """
+        while not self._shutting_down:
+            await asyncio.sleep(self._silence_fallback_delay)
+            if self._shutting_down:
+                return
+            # Skip iterations where the room isn't ready, but keep looping —
+            # transient blockers (mid-turn, no transcript yet) are normal.
+            if not self._room_is_listening() or not self._full_transcript.has_content():
+                continue
+            # Best-effort delivery. ``_maybe_deliver_commentary`` re-checks
+            # the same gates inside its lock and will silently early-return
+            # if e.g. min_gap hasn't elapsed — that's fine, we'll loop and
+            # try again next tick rather than dying on the floor.
+            await self._maybe_deliver_commentary(
+                trigger_reason="the video has gone quiet — react to what was said",
+                energy_level="amused",
+            )
+
+    async def _post_intro_kickoff(self) -> None:
+        """Force the first commentary turn after intros land.
+
+        Between intros ending and the silence-fallback loop's first wake,
+        there's a window where both personas are LISTENING but nobody has
+        reason to speak yet. That window used to stretch out and feel like
+        the pair had stalled. Fire one guaranteed turn soon after intros so
+        the show actually starts.
+        """
+        await asyncio.sleep(_POST_INTRO_KICKOFF_DELAY_S)
+        if self._shutting_down or not self._room_is_listening():
             return
         await self._maybe_deliver_commentary(
-            trigger_reason="the video has gone quiet — react to what was said",
+            trigger_reason="post-intro kickoff — break the silence and start the show",
             energy_level="amused",
         )
+
+    async def _watchdog_loop(self) -> None:
+        """Last-resort forward-progress guarantor.
+
+        If ``_last_turn_time`` drifts past ``_WATCHDOG_INTERVAL_S`` while the
+        room is LISTENING, the watchdog forces a commentary turn regardless
+        of transcript state. Catches edge cases where the silence loop
+        silently died, the selector locked up, or a persona got stuck in a
+        non-LISTENING phase that later resolved without re-arming the loop.
+        """
+        while not self._shutting_down:
+            await asyncio.sleep(_WATCHDOG_INTERVAL_S)
+            if self._shutting_down:
+                return
+            idle = time.monotonic() - self._last_turn_time
+            if idle >= _WATCHDOG_INTERVAL_S and self._room_is_listening():
+                logger.warning("Watchdog: %.1fs idle — forcing commentary", idle)
+                await self._maybe_deliver_commentary(
+                    trigger_reason="watchdog — room was silent too long, step in",
+                    energy_level="amused",
+                )
 
     async def _maybe_deliver_commentary(self, *, trigger_reason: str, energy_level: str) -> None:
         """Pick a speaker (or skip) and deliver one commentary turn.
@@ -600,11 +699,6 @@ class Director:
             )
             if self._shutting_down:
                 return
-            if speaker_name == SKIP:
-                logger.info("Director skip — no speaker this turn")
-                # Reset the silence loop so we evaluate again later.
-                self._schedule_silence_fallback()
-                return
 
             persona = self._by_name.get(speaker_name)
             if persona is None:
@@ -626,38 +720,46 @@ class Director:
         Owns the commentary_start/end signalling, playout timeout safety
         net, and the ``last_speaker`` bookkeeping. The persona only knows
         how to compose its prompt and call ``SpeechGate.speak``.
+
+        The ``finally`` block publishes ``commentary_end`` unconditionally
+        — the client's Skip button relies on that event to disable, and
+        the previous design leaned on ``agent_state_changed`` which does
+        not fire when our ``synthesize_playout_complete`` recovery path
+        runs (see ``_wait_for_playout_robust``).
         """
         if self._shutting_down:
             return
         await self._publish_commentary_start(persona.name)
-        co_history, co_label = self._co_speaker_view(persona)
+        try:
+            co_history, co_label = self._co_speaker_view(persona)
 
-        handle = await persona.deliver_commentary(
-            recent_transcript=self._full_transcript.recent_transcript(),
-            trigger_reason=trigger_reason,
-            energy_level=energy_level,
-            co_speaker_history=co_history,
-            co_speaker_label=co_label,
-        )
-        # ``deliver_commentary`` returns None when the session was closed
-        # mid-flight (user disconnected while the selector was deliberating).
-        # Nothing to wait on — publish the matching commentary_end and bail.
-        if handle is None:
+            handle = await persona.deliver_commentary(
+                recent_transcript=self._full_transcript.recent_transcript(),
+                trigger_reason=trigger_reason,
+                energy_level=energy_level,
+                co_speaker_history=co_history,
+                co_speaker_label=co_label,
+            )
+            if handle is None:
+                return
+
+            # Reset the read cursor AFTER prompt is built (deliver_commentary
+            # already read it) so the next persona reacts to *new* podcast text.
+            self._full_transcript.reset_sentence_count()
+            self._note_speaker(persona.name)
+
+            try:
+                await self._wait_for_playout_robust(
+                    persona, handle, timeout=COMMENTARY_PLAYOUT_TIMEOUT, label="commentary"
+                )
+            finally:
+                self._timer.record_speech_end()
+                # Reset the watchdog's idle clock so it doesn't double-fire
+                # immediately after a long turn.
+                self._last_turn_time = time.monotonic()
+        finally:
             with contextlib.suppress(Exception):
                 await self._publish_commentary_end(persona.name)
-            return
-
-        # Reset the read cursor AFTER prompt is built (deliver_commentary
-        # already read it) so the next persona reacts to *new* podcast text.
-        self._full_transcript.reset_sentence_count()
-        self._note_speaker(persona.name)
-
-        try:
-            await self._wait_for_playout_robust(
-                persona, handle, timeout=COMMENTARY_PLAYOUT_TIMEOUT, label="commentary"
-            )
-        finally:
-            self._timer.record_speech_end()
 
     # ==================================================================
     # User push-to-talk
@@ -711,8 +813,8 @@ class Director:
                 p._set_phase(FoxPhase.LISTENING)  # type: ignore[attr-defined]
 
         await self._publish_commentary_start(persona.name)
-        co_history, co_label = self._co_speaker_view(persona)
         try:
+            co_history, co_label = self._co_speaker_view(persona)
             handle = await persona.deliver_user_reply(
                 user_text,
                 recent_transcript=self._full_transcript.recent_transcript(),
@@ -720,15 +822,17 @@ class Director:
                 co_speaker_label=co_label,
             )
             if handle is None:
-                with contextlib.suppress(Exception):
-                    await self._publish_commentary_end(persona.name)
                 return
             self._note_speaker(persona.name)
-            await self._wait_for_playout_robust(
-                persona, handle, timeout=COMMENTARY_PLAYOUT_TIMEOUT, label="user_reply"
-            )
+            try:
+                await self._wait_for_playout_robust(
+                    persona, handle, timeout=COMMENTARY_PLAYOUT_TIMEOUT, label="user_reply"
+                )
+            finally:
+                self._timer.record_speech_end()
         finally:
-            self._timer.record_speech_end()
+            with contextlib.suppress(Exception):
+                await self._publish_commentary_end(persona.name)
 
     # ==================================================================
     # Persona event callbacks (set on each PersonaAgent at construction)
@@ -738,13 +842,20 @@ class Director:
         self._timer.record_speech_start()
 
     def _on_persona_speech_end(self, persona: PersonaAgent) -> None:
-        """Real audio finished — un-duck client + re-arm silence loop."""
+        """Real audio finished — re-arm the silence loop.
+
+        ``commentary_end`` is NOT published here; the delivery paths
+        (``_deliver_commentary_for``, ``_handle_user_committed``,
+        ``_speak_intro_with_timeout``) each publish it in their own
+        ``finally`` block. That keeps a single authoritative emitter and
+        avoids dropping the event when the framework's
+        ``agent_state_changed: speaking→listening`` transition never
+        fires — e.g. the LemonSlice second-avatar
+        ``lk.playback_finished`` RPC went missing and we had to
+        synthesise completion ourselves.
+        """
         if self._shutting_down:
             return
-        self._fire_and_forget(
-            self._publish_commentary_end(persona.name),
-            name=f"commentary_end.{persona.name}",
-        )
         if not self._user_talking and self._room_is_listening():
             self._schedule_silence_fallback()
 
@@ -850,13 +961,13 @@ class Director:
         self._user_turn.end()
 
     def _handle_skip(self, _msg: dict) -> None:
-        """User hit "Skip commentary" — cut off anyone mid-utterance.
+        """User hit "Skip commentary" — cut off skippable turns only.
 
-        `interrupt()` is a no-op on idle personas, so it's safe to fire
-        at everyone.
+        Delegated to ``SkipCoordinator`` so intros and idle personas are
+        protected from a stray click landing in the narrow window between
+        Fox's intro ending and Alien's intro starting.
         """
-        for p in self._personas:
-            p.interrupt()
+        self._skip.request_skip()
 
     def _handle_settings(self, msg: dict) -> None:
         self.update_settings(
@@ -940,11 +1051,13 @@ class Director:
     # ==================================================================
     # Client signalling — commentary.control
     # ==================================================================
-    async def _publish_commentary_start(self, speaker: str) -> None:
-        await self._publish_control({"type": "commentary_start", "speaker": speaker})
+    async def _publish_commentary_start(self, speaker: str, *, phase: str = "commentary") -> None:
+        await self._publish_control(
+            {"type": "commentary_start", "speaker": speaker, "phase": phase}
+        )
 
-    async def _publish_commentary_end(self, speaker: str) -> None:
-        await self._publish_control({"type": "commentary_end", "speaker": speaker})
+    async def _publish_commentary_end(self, speaker: str, *, phase: str = "commentary") -> None:
+        await self._publish_control({"type": "commentary_end", "speaker": speaker, "phase": phase})
 
     async def _publish_agent_ready(self) -> None:
         speakers = [{"name": p.name, "label": p.label} for p in self._personas]
