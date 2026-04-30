@@ -10,18 +10,17 @@
  * they can't re-enter end during a teardown already in flight.
  */
 
-import { Track } from "livekit-client";
+import { DisconnectReason, Track } from "livekit-client";
 
 import { AudioGraph } from "./audio/audio-graph.js";
 import { SessionState } from "./config.js";
+import { EventDeduper } from "./livekit/event-deduper.js";
 import { RoomController } from "./livekit/room-controller.js";
 import { detectActiveMedia, syncPlayheadToAgent } from "./messaging/tab-bridge.js";
 import { personaFromAvatarIdentity, resolvePersonaKey } from "./persona.js";
 import { createSessionApi, friendlyApiError } from "./transport/api.js";
 import { captureAndPublishTabAudio, stopTabStream } from "./transport/tab-capture.js";
 import {
-  addCaption,
-  clearCaptions,
   hideError,
   mountAvatarVideo,
   resetAllSlots,
@@ -34,22 +33,77 @@ import { getPacing } from "./ui/pacing-controls.js";
 
 const $ = (sel) => document.querySelector(sel);
 
+// Parse the POST /api/sessions response into the internal session shape.
+// Validates the top-level fields and that exactly one room is marked
+// `role: "primary"` — anything else means the agent and API are out of
+// sync and we'd rather fail fast at start than wire up a half-broken
+// room topology.
+function parseSession(payload) {
+  if (!payload || typeof payload.session_id !== "string") {
+    throw new Error("Session response missing session_id");
+  }
+  if (typeof payload.livekit_url !== "string") {
+    throw new Error("Session response missing livekit_url");
+  }
+  if (!Array.isArray(payload.rooms) || payload.rooms.length === 0) {
+    throw new Error("Session response missing rooms[]");
+  }
+
+  const rooms = new Map();
+  let primaryCount = 0;
+  for (const entry of payload.rooms) {
+    if (
+      !entry ||
+      typeof entry.persona !== "string" ||
+      typeof entry.room_name !== "string" ||
+      typeof entry.token !== "string" ||
+      (entry.role !== "primary" && entry.role !== "secondary")
+    ) {
+      throw new Error(`Malformed room entry: ${JSON.stringify(entry)}`);
+    }
+    if (rooms.has(entry.persona)) {
+      throw new Error(`Duplicate persona in rooms[]: ${entry.persona}`);
+    }
+    if (entry.role === "primary") primaryCount++;
+    rooms.set(entry.persona, {
+      roomName: entry.room_name,
+      token: entry.token,
+      role: entry.role,
+    });
+  }
+  if (primaryCount !== 1) {
+    throw new Error(`Expected exactly one primary room, got ${primaryCount}`);
+  }
+
+  return {
+    sessionId: payload.session_id,
+    livekitUrl: payload.livekit_url,
+    rooms,
+  };
+}
+
 export class SessionLifecycle {
   constructor() {
     this._state = SessionState.IDLE;
     this._activeTabId = null;
     this._tabAudioStream = null;
+    // Per-session payload from POST /api/sessions. Holds
+    // `{sessionId, livekitUrl, rooms: Map<persona, …>}`. Cleared on end
+    // / partial-start failure.
+    this._session = null;
 
-    this._room = new RoomController({
-      onTrackSubscribed: this._onTrackSubscribed.bind(this),
-      onTrackUnsubscribed: this._onTrackUnsubscribed.bind(this),
-      onDataReceived: this._onDataReceived.bind(this),
-      onActiveSpeakers: this._onActiveSpeakers.bind(this),
-      onConnectionState: this._onConnectionState.bind(this),
-      onDisconnected: this._onDisconnected.bind(this),
-      onParticipantConnected: this._onParticipantConnected.bind(this),
-      onParticipantDisconnected: this._onParticipantDisconnected.bind(this),
-    });
+    // Primary RoomController. Aliases `_controllers.get(_primaryPersona)`.
+    // Outbound user commands (skip, pacing, play/pause sync) all publish
+    // on this controller — never on a secondary — so the agent's
+    // in-process fan-out is the single source of truth for cross-persona
+    // ordering.
+    this._room = null;
+    // Map<persona, RoomController>, one entry per room in the API's
+    // `rooms[]` response.
+    this._controllers = null;
+    // Persona key whose controller is the primary command channel.
+    // Resolved at start time from the API's `role: "primary"` entry.
+    this._primaryPersona = null;
     this._audio = new AudioGraph({ audioContainer: $("#audio-container") });
 
     // UI-only: which personas are currently mid-utterance. Drives slot
@@ -59,15 +113,22 @@ export class SessionLifecycle {
     // stuck ducked.
     this._speakingNow = new Set();
     // Personas currently mid-intro. Tracked separately so the Skip
-    // button can stay disabled during intros — the intro ritual (Fox,
-    // then Alien) is non-skippable, and a stray click landing between
-    // the two used to cut off Alien's intro.
+    // button can stay disabled during intros — the intro ritual is
+    // non-skippable.
     this._introNow = new Set();
     // LemonSlice avatar personas currently connected. When this drains
     // to empty after at least one connected, the session auto-ends —
     // no point staying on the session screen with no comedians left.
     this._connectedAvatars = new Set();
     this._everHadAvatar = false;
+
+    // Cross-room control-event dedup. The agent fans every
+    // `commentary.control` event out to every room stamped with a UUID
+    // `event_id`; we subscribe on every controller
+    // for redundancy, then collapse N copies down to one before any
+    // handler sees it. Reset on each `_resetSessionUi` so a fresh
+    // session starts with an empty cache.
+    this._eventDeduper = new EventDeduper();
   }
 
   get state() {
@@ -104,20 +165,67 @@ export class SessionLifecycle {
       // exist before the first avatar track can arrive.
       await this._audio.init();
 
-      const session = await createSessionApi(videoUrl, videoTitle);
+      const payload = await createSessionApi(videoUrl, videoTitle);
+
+      // Same callback for every controller — first one to fire wins
+      // and tears the whole session down.
+      const onDisconnected = (info) => this._onRoomDisconnected(info);
+
+      // Spawn one RoomController per entry in `rooms[]` and connect
+      // them in parallel. Track-subscribed and track-unsubscribed are
+      // wired on every controller so each room's persona-owned tracks
+      // (audio + avatar video) flow into the same `avatar-slots`
+      // registry / `AudioGraph` keyed by persona — no per-room slot
+      // map. Data, active-speaker, and participant-lifecycle handlers
+      // stay primary-only: the agent publishes commentary control on
+      // the primary room and avatar auto-end is tracked off that
+      // participant set.
+      this._session = parseSession(payload);
+      this._controllers = new Map();
+      for (const [persona, entry] of this._session.rooms) {
+        const isPrimary = entry.role === "primary";
+        const controller = new RoomController({
+          roomName: entry.roomName,
+          token: entry.token,
+          role: entry.role,
+          persona,
+          handlers: isPrimary
+            ? this._buildHandlers(entry.roomName)
+            : this._buildSecondaryHandlers(entry.roomName),
+          onDisconnected,
+        });
+        this._controllers.set(persona, controller);
+        if (isPrimary) {
+          this._room = controller;
+          this._primaryPersona = persona;
+        }
+      }
 
       $("#setup-screen").classList.add("hidden");
       $("#session-screen").classList.remove("hidden");
 
-      await this._room.connect(session.token, session.livekit_url);
+      // Fail-fast: if any controller's connect rejects, Promise.all
+      // rejects and the catch below tears down whatever already
+      // succeeded. Connection ordering doesn't matter, so don't
+      // serialize.
+      await Promise.all(
+        [...this._controllers.values()].map((c) => c.connect(payload.livekit_url)),
+      );
+
+      // Tab audio publishes exactly once, to the primary room only.
+      // Secondary rooms must not see this uplink — duplicating it would
+      // double the user's outbound bandwidth and let secondary agents
+      // react to the source audio they're meant to receive only via the
+      // primary's relay.
+      const primaryRoom = [...this._controllers.values()].find((c) => c.role === "primary").room;
       this._tabAudioStream = await captureAndPublishTabAudio({
         tabId: this._activeTabId,
-        room: this._room,
+        room: primaryRoom,
         audioGraph: this._audio,
       });
 
       this._state = SessionState.LIVE;
-      console.log("[ext] Session started:", session.session_id);
+      console.log("[ext] Session started:", this._session.sessionId);
     } catch (err) {
       console.error("[ext] Failed to start session:", err);
       // Roll back any partial setup so a retry starts from a clean
@@ -142,10 +250,20 @@ export class SessionLifecycle {
     if (endBtn) endBtn.disabled = true;
 
     try {
-      await this._room.dispose();
-      this._audio.teardown();
+      // Teardown order:
+      //   1. Stop tab capture so we don't keep streaming source audio
+      //      into a room we're about to disconnect from.
+      //   2. Dispose every remaining RoomController. Each dispose drops
+      //      its listeners before issuing CLIENT_INITIATED disconnect,
+      //      which prevents a teardown disconnect from re-entering
+      //      `_onRoomDisconnected`.
+      //   3. Tear down the audio graph (closes the AudioContext).
+      //   4. Reset the UI back to the setup screen.
       stopTabStream(this._tabAudioStream);
       this._tabAudioStream = null;
+      await this._disposeControllers();
+      this._audio.teardown();
+      this._session = null;
       this._resetSessionUi();
       this._resetSetupUi();
       // Re-detect media in the active tab so the start button reflects
@@ -169,12 +287,19 @@ export class SessionLifecycle {
 
   skipCommentary() {
     if (this._speakingNow.size === 0) return;
-    this._room.publishControl({ type: "skip" }, "podcast.control");
+    if (!this._sendPrimaryControl({ type: "skip" }, "podcast.control")) {
+      // Primary is the only command channel up — without it we can't
+      // reach the agent at all. Tear the session down (which disposes
+      // every controller, primary and secondary) so the user lands back
+      // on the setup screen with the error rather than staring at a
+      // skip button that silently does nothing.
+      this._failSafePrimaryLost();
+    }
   }
 
   publishPacing() {
     const p = getPacing();
-    this._room.publishControl(
+    this._sendPrimaryControl(
       { type: "settings", frequency: p.frequency, length: p.length },
       "podcast.control",
     );
@@ -184,7 +309,7 @@ export class SessionLifecycle {
 
   async _teardownPartialStart() {
     try {
-      await this._room.dispose();
+      await this._disposeControllers();
     } catch (err) {
       console.warn("[ext] dispose during partial-start cleanup:", err);
     }
@@ -195,7 +320,61 @@ export class SessionLifecycle {
     }
     stopTabStream(this._tabAudioStream);
     this._tabAudioStream = null;
+    this._session = null;
     this._resetSessionUi();
+  }
+
+  // Dispose every controller we own, then clear the references. Used by
+  // both clean teardown (`end`) and partial-start cleanup. Disposing
+  // each controller handles the case where some connected and others
+  // didn't (each controller's own dispose() is a no-op when its room is
+  // null).
+  async _disposeControllers() {
+    if (!this._controllers) return;
+    const controllers = [...this._controllers.values()];
+    this._controllers = null;
+    this._room = null;
+    this._primaryPersona = null;
+    await Promise.all(controllers.map((c) => c.dispose()));
+  }
+
+  // Build the SessionLifecycle event handler bag for the primary
+  // controller. `roomName` is closed over so `_onTrackSubscribed` knows
+  // which room delivered the track and can pass that through to the
+  // `avatar-slots` registry's ownership guard.
+  _buildHandlers(roomName) {
+    return {
+      onTrackSubscribed: (track, publication, participant) =>
+        this._onTrackSubscribed(track, publication, participant, roomName),
+      onTrackUnsubscribed: this._onTrackUnsubscribed.bind(this),
+      onDataReceived: this._onDataReceived.bind(this),
+      onActiveSpeakers: this._onActiveSpeakers.bind(this),
+      onConnectionState: this._onConnectionState.bind(this),
+      onParticipantConnected: this._onParticipantConnected.bind(this),
+      onParticipantDisconnected: this._onParticipantDisconnected.bind(this),
+    };
+    // Note: disconnect handling is wired separately via the controller's
+    // dedicated `onDisconnected` constructor param (see `start`) so it
+    // fires uniformly on primary AND secondary rooms.
+  }
+
+  // Secondary controllers. Track-subscribed and track-unsubscribed are
+  // wired so secondary-room avatar tracks land in the same
+  // `avatar-slots` registry / `AudioGraph` as the primary's, keyed by
+  // persona — the registry is the single shared seam between rooms
+  // (no per-room slot map). Data is also wired so control events that
+  // survived only on a secondary's data channel still reach
+  // `_onDataReceived`; the EventDeduper collapses any duplicates before
+  // downstream handlers fire. Active-speaker and
+  // participant-lifecycle handlers stay primary-only and are omitted
+  // here.
+  _buildSecondaryHandlers(roomName) {
+    return {
+      onTrackSubscribed: (track, publication, participant) =>
+        this._onTrackSubscribed(track, publication, participant, roomName),
+      onTrackUnsubscribed: this._onTrackUnsubscribed.bind(this),
+      onDataReceived: this._onDataReceived.bind(this),
+    };
   }
 
   _resetSessionUi() {
@@ -203,7 +382,7 @@ export class SessionLifecycle {
     this._introNow.clear();
     this._connectedAvatars.clear();
     this._everHadAvatar = false;
-    clearCaptions();
+    this._eventDeduper.reset();
     resetAllSlots();
     this._updateSkipButton();
   }
@@ -251,7 +430,7 @@ export class SessionLifecycle {
 
   handleMediaStateUpdate(msg) {
     if (this._state !== SessionState.LIVE) return;
-    if (!this._room.isConnected()) return;
+    if (!this._primaryController()?.isConnected()) return;
     // Pausing the media cuts the tab-audio track the agent relies on
     // for STT, so there's nothing left for Fox to react to. End the
     // session rather than leave the avatar streaming into silence.
@@ -259,25 +438,19 @@ export class SessionLifecycle {
       this.end().catch((err) => console.warn("[ext] auto-end on pause failed:", err));
       return;
     }
-    this._room.publishControl({ type: "play", t: msg.time }, "podcast.control");
+    this._sendPrimaryControl({ type: "play", t: msg.time }, "podcast.control");
   }
 
   // ── Room event handlers ──
 
-  _onTrackSubscribed(track, publication, participant) {
+  // `roomName` is forwarded by the per-controller handler bag (see
+  // `_buildHandlers` / `_buildSecondaryHandlers`). Carrying it into
+  // `mountAvatarVideo` lets the avatar-slots registry warn if a slot
+  // is ever remounted from a different room than originally claimed
+  // it — a defensive guard against a regression that would otherwise
+  // silently overwrite one persona's video with another's.
+  _onTrackSubscribed(track, publication, participant, roomName = null) {
     const { personaName, key } = resolvePersonaKey(participant, track, publication);
-
-    // [DIAG] Per-track subscription log — investigating "1-in-4 silent
-    // avatar". Captures every track that reaches the panel so we can tell
-    // "track never arrived" apart from "arrived but graph silent".
-    console.log(
-      "[ext][diag] TrackSubscribed",
-      "kind=", track.kind,
-      "identity=", participant.identity,
-      "trackName=", track.name || publication?.trackName,
-      "personaName=", personaName,
-      "key=", key,
-    );
 
     if (track.kind === Track.Kind.Audio) {
       // Only attach tracks that resolve to a known persona — either by
@@ -309,7 +482,7 @@ export class SessionLifecycle {
 
     const slot = slotFor(personaName);
     if (!slot) return;
-    mountAvatarVideo(slot, track);
+    mountAvatarVideo(slot, track, roomName);
     spawnReaction(slot, "eyes");
   }
 
@@ -332,6 +505,12 @@ export class SessionLifecycle {
       return;
     }
 
+    // Cross-room dedup: the agent fans the same event out to every room
+    // and stamps each copy with a shared `event_id`. First arrival
+    // wins; later copies on other rooms are dropped here so every
+    // downstream branch fires exactly once per logical event.
+    if (!this._eventDeduper.check(msg.event_id)) return;
+
     if (topic === "commentary.control" && msg.type === "agent_ready") {
       console.log("[ext] Agent ready — syncing playhead");
       this._syncPlayhead();
@@ -342,10 +521,8 @@ export class SessionLifecycle {
     // Commentary lifecycle — drives UI state only (slot highlighting,
     // Skip button enable). Tab-audio ducking is NOT driven from here;
     // the sidechain envelope follower watches the actual persona
-    // voice signal and decides for itself. That decoupling is
-    // deliberate: LemonSlice's second-avatar `lk.playback_finished`
-    // RPC is flaky (see server/CLAUDE.md) and a late commentary_end
-    // would otherwise leave the tab stuck ducked.
+    // voice signal and decides for itself, so a late commentary_end
+    // can't leave the tab stuck ducked.
     if (topic === "commentary.control" && msg.type === "commentary_start") {
       const personaName = msg.speaker;
       const phase = msg.phase || "commentary";
@@ -376,14 +553,6 @@ export class SessionLifecycle {
       return;
     }
 
-    // Captions. Today the agent only publishes commentary_start /
-    // commentary_end / agent_ready, so this is currently unreachable
-    // — kept wired up so a future transcript-forwarding addition on
-    // the agent side can land without UI changes.
-    if (msg.type === "agent_transcript" || msg.text) {
-      const text = msg.text || msg.content;
-      if (text && msg.speaker) addCaption(msg.speaker, text);
-    }
   }
 
   // VAD-driven active-speaker updates highlight the matching slot only
@@ -409,19 +578,40 @@ export class SessionLifecycle {
     console.log("[ext] Connection state:", state);
   }
 
-  _onDisconnected(reason) {
-    console.log("[ext] Disconnected:", reason);
+  // Fired when a controller's underlying Room emits RoomEvent.Disconnected.
+  // LiveKit only emits this once its internal reconnect loop has given
+  // up, so transient blips don't reach us — this signal always means
+  // "the room is really gone." CLIENT_INITIATED is the disconnect we
+  // ourselves initiated via `dispose()`; the listeners are normally
+  // pulled before that fires, but we gate on the reason defensively in
+  // case a future SDK update changes the teardown ordering. Anything
+  // else (server kicked, signal failure, room deleted, agent crash) is
+  // session-ending: the room's gone and we deliberately do NOT try to
+  // reconnect — the user has to click Start again.
+  _onRoomDisconnected({ reason, roomName, role, persona }) {
+    if (reason === DisconnectReason.CLIENT_INITIATED) {
+      console.log(
+        "[ext] Room disconnected (client-initiated):",
+        "name=", roomName, "role=", role, "persona=", persona,
+      );
+      return;
+    }
+    console.warn(
+      "[ext] Room disconnected mid-session — ending session:",
+      "name=", roomName, "role=", role, "persona=", persona, "reason=", reason,
+    );
+    // First disconnect wins. Subsequent calls (e.g. the second room
+    // dropping moments later) hit the state guard inside `end()` and
+    // become no-ops.
+    if (this._state !== SessionState.LIVE) return;
+    showError("Connection lost — please restart");
+    this.end().catch((err) =>
+      console.warn("[ext] auto-end on room disconnect failed:", err),
+    );
   }
 
   _onParticipantConnected(participant) {
     const personaName = personaFromAvatarIdentity(participant.identity);
-    // [DIAG] Investigating "1-in-4 silent avatar" — log every join so we
-    // can confirm both LemonSlice avatars actually reach the room.
-    console.log(
-      "[ext][diag] ParticipantConnected",
-      "identity=", participant.identity,
-      "personaName=", personaName,
-    );
     if (!personaName) return;
     this._connectedAvatars.add(personaName);
     this._everHadAvatar = true;
@@ -450,8 +640,40 @@ export class SessionLifecycle {
   _syncPlayhead() {
     syncPlayheadToAgent({
       tabId: this._activeTabId,
-      onPlay: ({ t }) => this._room.publishControl({ type: "play", t }, "podcast.control"),
-      onPause: () => this._room.publishControl({ type: "pause" }, "podcast.control"),
+      onPlay: ({ t }) => this._sendPrimaryControl({ type: "play", t }, "podcast.control"),
+      onPause: () => this._sendPrimaryControl({ type: "pause" }, "podcast.control"),
     });
+  }
+
+  // Resolve the primary RoomController via the controllers map so the
+  // primary-only contract is enforced from a single source of truth.
+  // Returns null when no session is live.
+  _primaryController() {
+    if (!this._controllers || !this._primaryPersona) return null;
+    return this._controllers.get(this._primaryPersona) ?? null;
+  }
+
+  // Single chokepoint for outbound user commands. Always publishes via
+  // the primary controller — never iterates `_controllers`. The agent
+  // fans the command out to its in-process secondary state, so a
+  // duplicate from the extension would race the agent's authoritative
+  // ordering. Returns true when sent, false when the primary is gone
+  // (caller decides whether that's a no-op or a fail-safe trigger).
+  _sendPrimaryControl(payload, topic) {
+    const primary = this._primaryController();
+    if (!primary || !primary.isConnected()) return false;
+    primary.publishControl(payload, topic);
+    return true;
+  }
+
+  // Primary-room-disconnected fail-safe for user-initiated controls.
+  // Tears the whole session down (so any still-connected secondary is
+  // disposed by `_disposeControllers` rather than left dangling) and
+  // surfaces an error on the setup screen the user lands back on.
+  _failSafePrimaryLost() {
+    showError("Lost connection to commentary — please restart");
+    this.end().catch((err) =>
+      console.warn("[ext] auto-end on lost primary failed:", err),
+    );
   }
 }

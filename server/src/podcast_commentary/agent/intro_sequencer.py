@@ -73,14 +73,23 @@ class IntroSequencer:
         self,
         *,
         personas: list[PersonaAgent],
-        room: rtc.Room,
+        rooms: dict[str, rtc.Room],
         avatar_identities: dict[str, str],
         room_state: RoomState,
         control: ControlChannel,
         playout_waiter: PlayoutWaiter,
     ) -> None:
+        # Each persona owns its own ``rtc.Room`` (dual-room mode). The
+        # avatar-readiness gate has to listen on the persona's *own* room
+        # — a non-primary persona's avatar publishes video into its
+        # secondary room and is invisible from the primary. Watching the
+        # wrong room means the wait times out and the intro is silently
+        # skipped.
+        missing = [p.name for p in personas if p.name not in rooms]
+        if missing:
+            raise ValueError(f"IntroSequencer missing room mapping for personas: {missing!r}")
         self._personas = personas
-        self._room = room
+        self._rooms = rooms
         self._avatar_identities = avatar_identities
         self._room_state = room_state
         self._control = control
@@ -204,7 +213,8 @@ class IntroSequencer:
 
         self._set_status(persona, IntroStatus.WAITING_FOR_AVATAR)
         timeout = persona.config.avatar.startup_timeout_s
-        ready = await self._wait_for_avatar_ready(identity, timeout=timeout)
+        room = self._rooms[persona.name]
+        ready = await self._wait_for_avatar_ready(identity, room=room, timeout=timeout)
         if not ready and not self._room_state.shutting_down:
             logger.warning(
                 "Skipping %s intro — avatar %s not ready within %.0fs",
@@ -214,13 +224,20 @@ class IntroSequencer:
             )
         return ready
 
-    async def _wait_for_avatar_ready(self, identity: str, *, timeout: float) -> bool:
+    async def _wait_for_avatar_ready(
+        self, identity: str, *, room: rtc.Room, timeout: float
+    ) -> bool:
         """Wait until an avatar participant has joined AND published video.
 
         Publication (not subscription) is what ``DataStreamIO._start_task``
         awaits internally — matching that signal here means the avatar's
         audio path will flow the moment we kick off speech. Returns True
         on ready, False on timeout or shutdown.
+
+        ``room`` is the persona's own ``rtc.Room`` (primary or secondary).
+        Each LemonSlice avatar publishes into its own room only, so we
+        must watch the matching one — a primary-room listener never sees
+        a secondary-room avatar.
         """
         if self._room_state.shutting_down:
             return False
@@ -244,12 +261,12 @@ class IntroSequencer:
             ):
                 ready.set()
 
-        self._room.on("participant_connected", on_participant_connected)
-        self._room.on("track_published", on_track_published)
+        room.on("participant_connected", on_participant_connected)
+        room.on("track_published", on_track_published)
         start = time.monotonic()
         try:
             # Fast path — already joined and published before we attached.
-            for p in self._room.remote_participants.values():
+            for p in room.remote_participants.values():
                 if p.identity == identity and has_video(p):
                     logger.info(
                         "[avatar-ready] %s fast-path hit (already published)",
@@ -284,8 +301,8 @@ class IntroSequencer:
             )
             return False
         finally:
-            self._room.off("participant_connected", on_participant_connected)
-            self._room.off("track_published", on_track_published)
+            room.off("participant_connected", on_participant_connected)
+            room.off("track_published", on_track_published)
 
     async def _speak_intro_with_timeout(self, persona: PersonaAgent) -> None:
         """Deliver one persona's intro with a hard upper bound.

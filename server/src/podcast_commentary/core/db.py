@@ -74,6 +74,16 @@ async def run_migrations() -> None:
                 ended_at TIMESTAMPTZ
             )
         """)
+        # Per-persona room mapping. Shape:
+        # {"<persona_name>": "<room_name>", ...}. JSONB over a side-table
+        # because sessions are short-lived and we never query by
+        # room_name — the agent receives its room/persona context via job
+        # metadata, not a DB lookup. The flat `room_name` column above
+        # holds the primary persona's room for quick lookups (status
+        # checks, joins from logs).
+        await conn.execute("""
+            ALTER TABLE sessions ADD COLUMN IF NOT EXISTS rooms JSONB
+        """)
         # Unified conversation log: every utterance by every speaker in the
         # room (podcast audio STT, agent TTS replies), plus system events
         # like rolling summaries. Enables historic replay and post-hoc
@@ -101,19 +111,43 @@ async def create_session(
     room_name: str,
     video_url: str,
     video_title: str | None = None,
+    rooms: dict[str, str] | None = None,
+    session_id: str | None = None,
 ) -> str:
+    """Insert a new session row and return its id.
+
+    Pass ``session_id`` to fix the row's primary key client-side — required
+    when callers need to derive deterministic per-persona room names from
+    the session id before the INSERT. Omit it to let the DB generate the
+    id via ``gen_random_uuid()``.
+    """
     pool = await _get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            INSERT INTO sessions (room_name, video_url, video_title)
-            VALUES ($1, $2, $3)
-            RETURNING id
-            """,
-            room_name,
-            video_url,
-            video_title,
-        )
+        if session_id is None:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO sessions (room_name, video_url, video_title, rooms)
+                VALUES ($1, $2, $3, $4::jsonb)
+                RETURNING id
+                """,
+                room_name,
+                video_url,
+                video_title,
+                json.dumps(rooms) if rooms else None,
+            )
+        else:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO sessions (id, room_name, video_url, video_title, rooms)
+                VALUES ($1::uuid, $2, $3, $4, $5::jsonb)
+                RETURNING id
+                """,
+                session_id,
+                room_name,
+                video_url,
+                video_title,
+                json.dumps(rooms) if rooms else None,
+            )
         return str(row["id"])
 
 
@@ -121,7 +155,30 @@ async def get_session(session_id: str) -> dict | None:
     pool = await _get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM sessions WHERE id = $1", session_id)
-        return dict(row) if row else None
+        if not row:
+            return None
+        result = dict(row)
+        # asyncpg returns JSONB as a string; decode for callers.
+        if isinstance(result.get("rooms"), str):
+            result["rooms"] = json.loads(result["rooms"])
+        return result
+
+
+async def get_session_rooms(session_id: str) -> dict[str, str] | None:
+    """Fetch the per-persona room mapping for a session.
+
+    Returns None if the session doesn't exist or predates the dual-room
+    schema (no `rooms` written at insert time).
+    """
+    pool = await _get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT rooms FROM sessions WHERE id = $1", session_id)
+        if not row or row["rooms"] is None:
+            return None
+        rooms = row["rooms"]
+        if isinstance(rooms, str):
+            rooms = json.loads(rooms)
+        return rooms
 
 
 async def end_session(session_id: str) -> None:

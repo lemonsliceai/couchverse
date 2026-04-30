@@ -11,7 +11,7 @@
  * Bundled by esbuild into dist/sidepanel.js, which sidepanel.html loads.
  */
 
-import { SessionState } from "./config.js";
+import { API_URL, SessionState } from "./config.js";
 import { detectActiveMedia, registerTabMessageListener } from "./messaging/tab-bridge.js";
 import { SessionLifecycle } from "./session.js";
 import { initPacingControls } from "./ui/pacing-controls.js";
@@ -19,6 +19,10 @@ import { initPacingControls } from "./ui/pacing-controls.js";
 const $ = (sel) => document.querySelector(sel);
 
 document.addEventListener("DOMContentLoaded", () => {
+  // Logged so a contributor opening DevTools on the side panel can see
+  // which backend the bundle was built against — the URL is baked at
+  // build time and there is no runtime override.
+  console.log("[ext] API_URL:", API_URL);
   const session = new SessionLifecycle();
 
   // ── Initial active-tab detection ──

@@ -55,6 +55,13 @@ async function getTabMediaStream(streamId) {
  * graph for sidechain ducking + local loopback, and publish it to LiveKit
  * for the agent's STT pipeline.
  *
+ * `room` is a LiveKit `Room` instance (not a RoomController). Under the
+ * dual-room architecture the caller resolves the primary room explicitly
+ * and passes it here so the single tabCapture stream is published once,
+ * to the primary room only — secondary rooms must never see the user's
+ * audio uplink, both for bandwidth and to keep the audio topology
+ * uni-directional.
+ *
  * Returns the captured MediaStream so the caller can stop its tracks
  * during teardown (the audio graph's own teardown closes the context but
  * doesn't own the stream's lifecycle).
@@ -87,7 +94,7 @@ export async function captureAndPublishTabAudio({ tabId, room, audioGraph }) {
   // LiveKit auto-subscribe works reliably — the agent's room-level
   // track_subscribed handler then matches on `name === "podcast-audio"`
   // and attaches it to the STT pipeline.
-  const publication = await room.publishTrack(audioTracks[0], {
+  const publication = await room.localParticipant.publishTrack(audioTracks[0], {
     name: "podcast-audio",
     source: Track.Source.ScreenShareAudio,
   });

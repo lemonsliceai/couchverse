@@ -114,20 +114,6 @@ export class AudioGraph {
   attachPersona(track, key) {
     if (this._personaNodes.has(key)) this.detachPersona(key);
 
-    // [DIAG] Track-attach diagnostics — investigating "1-in-4 silent avatar"
-    // symptom. Logs the underlying MediaStreamTrack state at attach time so
-    // we can tell apart "track never delivered" vs "delivered but silent".
-    const mst = track.mediaStreamTrack;
-    console.log(
-      "[ext][diag] attachPersona begin",
-      "key=", key,
-      "ctx.state=", this._ctx?.state,
-      "mst.id=", mst?.id,
-      "mst.enabled=", mst?.enabled,
-      "mst.muted=", mst?.muted,
-      "mst.readyState=", mst?.readyState,
-    );
-
     // Keep a muted <audio> element in the DOM purely as a WebRTC receiver
     // wake-up: Chrome won't pull RTP samples through a remote track
     // unless something is consuming it, and a playing media element is
@@ -158,7 +144,7 @@ export class AudioGraph {
     // comedian (no trim, no sidechain tap), and detachPersona can clean
     // it up the same way. Better than silence.
     const registerFallback = (reason) => {
-      console.warn("[ext][diag] attachPersona fallback path", "key=", key, "reason=", reason);
+      console.warn("[ext] attachPersona fallback path", "key=", key, "reason=", reason);
       el.muted = false;
       this._personaNodes.set(key, {
         source: null,
@@ -212,38 +198,7 @@ export class AudioGraph {
       buffer,
       audioEl: el,
       track,
-      // [DIAG] running max RMS observed by the follower since attach.
-      // Updated in the follower tick; read by the silence sentinel below.
-      peakRmsObserved: 0,
-      attachedAt: performance.now(),
     });
-
-    // [DIAG] Silence sentinel — investigating "1-in-4 silent avatar". The
-    // follower's rAF tick keeps `peakRmsObserved` updated; this fires once
-    // 12s after attach and reports whether ANY non-silent samples arrived
-    // across the entire window. 12s comfortably covers Fox's intro AND
-    // Alien's intro (Alien speaks ~5-7s post-attach, finishing ~10-12s),
-    // so a still-zero peak means the graph is plumbed but no samples ever
-    // flowed — the exact "second source node failed to divert" symptom
-    // that motivated the createMediaElementSource → createMediaStreamSource
-    // switch. (We only schedule one shot per attach; detachPersona makes
-    // the late callback a no-op via the personaNodes lookup.)
-    setTimeout(() => {
-      const node = this._personaNodes.get(key);
-      if (!node || !node.analyser) return;
-      const mstNow = node.track?.mediaStreamTrack;
-      const peak = node.peakRmsObserved;
-      const log = peak < 1e-6 ? console.warn : console.log;
-      log(
-        "[ext][diag] silence sentinel",
-        "key=", key,
-        "peakRmsObserved=", peak.toExponential(2),
-        "mst.enabled=", mstNow?.enabled,
-        "mst.muted=", mstNow?.muted,
-        "mst.readyState=", mstNow?.readyState,
-        peak < 1e-6 ? "(SILENT — graph plumbed but no audio frames in 12s)" : "",
-      );
-    }, 12000);
   }
 
   detachPersona(key) {
@@ -298,8 +253,6 @@ export class AudioGraph {
         }
         const rms = Math.sqrt(sumSquares / node.buffer.length);
         if (rms > peakRms) peakRms = rms;
-        // [DIAG] Per-persona peak — read by the silence sentinel.
-        if (rms > node.peakRmsObserved) node.peakRmsObserved = rms;
       }
 
       const now = performance.now();

@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     # Alien for the dual-avatar experience.
     PERSONAS: str = "fox,chaos_agent"
 
+    # Which persona's room receives the LiveKit `RoomAgentDispatch` (the
+    # "primary" room). The agent worker is dispatched into this room only;
+    # all other personas live in secondary rooms that the agent self-joins
+    # via dispatch metadata. Must be one of the names listed in PERSONAS.
+    PRIMARY_PERSONA: str = "fox"
+
     # Speaker-selection LLM (Director judge). Cheap + fast wins here — we
     # only need a JSON pick, not creative writing. Same Groq model as the
     # comedians; could be swapped for an even smaller one.

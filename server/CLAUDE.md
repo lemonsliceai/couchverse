@@ -20,17 +20,34 @@ uv run pytest                    # test
 
 ```
 src/podcast_commentary/
-├── api/           # FastAPI HTTP server (sessions, tokens)
-│   ├── app.py     # App factory, CORS, lifespan (pool warmup + migrations)
-│   └── routes/sessions.py  # Session create / get / end + /health
-├── agent/         # LiveKit agent (STT → LLM → TTS → avatar)
-│   ├── main.py    # Entrypoint, wires STT/LLM/TTS/VAD plugins
-│   ├── comedian.py        # ComedianAgent: phase state machine, commentary orchestration
+├── api/           # FastAPI HTTP server (sessions, tokens, agent dispatch)
+│   ├── app.py             # App factory, CORS, lifespan (pool warmup + migrations)
+│   ├── livekit_tokens.py  # User + agent JWT minting
+│   ├── livekit_dispatch.py # RoomAgentDispatch metadata schema (one room per persona)
+│   └── routes/sessions.py # POST/GET/PATCH /api/sessions + /health
+├── agent/         # LiveKit agent (STT → LLM → TTS → avatar), one AgentSession per persona
+│   ├── main.py            # Entrypoint; parses dispatch metadata, builds personas
+│   ├── director.py        # Wires components, owns lifecycle (start/shutdown)
+│   ├── comedian.py        # PersonaAgent: phase state machine, per-persona delivery
 │   ├── commentary.py      # CommentaryTimer, FullTranscript, timing constants
+│   ├── commentary_pipeline.py  # Single-flight selector → delivery turn
+│   ├── commentary_scheduler.py # Silence loop, watchdog, post-intro kickoff, sentence trigger
+│   ├── intro_sequencer.py # Sequenced intros gated on per-persona avatar readiness
+│   ├── secondary_room.py  # Self-join wrapper for non-primary persona rooms
+│   ├── dispatch_metadata.py # Helper: read dispatch metadata + build persona descriptors
+│   ├── control_channel.py # commentary.control I/O (publish + dispatch, fan-out across rooms)
+│   ├── playout_waiter.py  # Bounded wait on SpeechHandle.wait_for_playout
+│   ├── room_state.py      # Shared mutable state: shutdown flag, last-turn clock, listening predicate
+│   ├── settings_controller.py # Frequency / length presets (chattiness, reply length)
+│   ├── skip_coordinator.py # Skip-button → interrupt + commentary_end fan-out
+│   ├── task_supervisor.py # fire_and_forget tracking + bulk cancel
+│   ├── selector.py        # Picks which persona speaks next; consecutive-turn cap
 │   ├── podcast_pipeline.py # Subscribes to podcast-audio track + Groq STT
-│   ├── speech_gate.py     # Gate logic for "is Fox speaking?"
+│   ├── speech_gate.py     # Gate logic for "is the agent currently speaking?"
 │   ├── prompts.py         # System prompts and context builders
-│   └── angles.py          # 7 comedic angle definitions (Silicon Valley style)
+│   ├── angles.py          # Comedic angle definitions
+│   ├── metrics.py         # In-process counters (turn totals, RPC outcomes, gaps)
+│   └── fox_config.py      # Persona configs (voice, avatar URL, label)
 └── core/          # Shared across api and agent
     ├── config.py  # Pydantic BaseSettings (loads .env)
     └── db.py      # asyncpg pool, migrations, CRUD
@@ -49,8 +66,8 @@ Each PersonaAgent uses a `FoxPhase` enum: INTRO → LISTENING → COMMENTATING. 
 
 ## Gotchas
 
-- **Fire-and-forget tasks:** Never use bare `asyncio.create_task()`. Use `_fire_and_forget()` which attaches a done-callback to surface exceptions.
-- **Speech handle timeouts:** LemonSlice's *second* avatar in a multi-avatar room is unreliable about sending `lk.playback_finished` back — see livekit/agents #3510 and #4315 (running >1 `AvatarSession` in one room is explicitly unsupported). `SpeechHandle.wait_for_playout` will hang forever when the RPC is missing. Always wait via `Director._wait_for_playout_robust`, which falls through to `PersonaAgent.synthesize_playout_complete()` on timeout — that calls `AudioOutput.on_playback_finished(pushed_duration, interrupted=False)` ourselves, waking the waiter without cutting off audio mid-sentence. `force_listening()` remains only as the nuclear last resort.
+- **Fire-and-forget tasks:** Never use bare `asyncio.create_task()`. Use `TaskSupervisor.fire_and_forget()` (in `agent/task_supervisor.py`), which tracks the task for bulk cancel on shutdown and attaches a done-callback that surfaces exceptions. The one deliberate exception is `Director._trip_shutdown_latch` — see the comment there.
+- **One `AvatarSession` per room:** every persona runs in its own `rtc.Room` (`{session_id}-{persona}`) so each room hosts exactly one LemonSlice `AvatarSession`. This is what removed the second-avatar `lk.playback_finished` RPC drops we used to see — running >1 `AvatarSession` in one room is explicitly unsupported (livekit/agents #3510, #4315). `PlayoutWaiter` now just `asyncio.wait_for`s `SpeechHandle.wait_for_playout()` against a hard upper bound; the old robust-fallback ladder is gone. Don't reintroduce two `AvatarSession`s in a single room.
 - **Database migrations** run inline in the FastAPI lifespan hook via `run_migrations()` in db.py. All DDL is idempotent (`CREATE TABLE IF NOT EXISTS`).
 - **Deployment configs** (`fly.toml`, `livekit.toml`) are gitignored. Copy from `.example` files and fill in your values.
 

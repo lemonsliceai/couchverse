@@ -28,6 +28,20 @@ loadEnvFile(".env");
 
 const DEFAULT_API_URL = "https://podcast-commentary-api.fly.dev";
 const API_URL = process.env.API_URL || DEFAULT_API_URL;
+const usingProductionDefault = !process.env.API_URL;
+
+// Surface the resolved API_URL before the build runs. Contributors who
+// expected a local backend would otherwise discover the production
+// default only when the side panel reports a connection failure — by
+// then the bundle is already loaded and the cause isn't obvious.
+if (usingProductionDefault) {
+  console.log(`[build] API_URL=${API_URL} (production default — no chrome_extension/.env)`);
+  console.log("[build] To target a local backend, create chrome_extension/.env containing:");
+  console.log("[build]   API_URL=http://localhost:8080");
+  console.log("[build] Or for a one-off build: API_URL=http://localhost:8080 npm run build");
+} else {
+  console.log(`[build] API_URL=${API_URL}`);
+}
 
 const buildOptions = {
   entryPoints: ["src/sidepanel.js"],
@@ -43,13 +57,15 @@ const buildOptions = {
   logLevel: "info",
 };
 
+const summary = `API_URL=${API_URL}`;
+
 if (watch) {
   esbuild.context(buildOptions).then((ctx) => {
     ctx.watch();
-    console.log(`Watching for changes... (API_URL=${API_URL})`);
+    console.log(`Watching for changes... (${summary})`);
   });
 } else {
   esbuild.build(buildOptions).then(() => {
-    console.log(`Build complete: dist/sidepanel.js (API_URL=${API_URL})`);
+    console.log(`Build complete: dist/sidepanel.js (${summary})`);
   });
 }

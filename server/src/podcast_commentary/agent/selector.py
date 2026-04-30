@@ -64,17 +64,10 @@ class SpeakerSelector:
 
         Strategy:
           1. Filter out personas over the consecutive-turn cap.
-          2. If only one remains, pick it (LLM is overkill).
-          3. Otherwise ask the LLM with a short timeout. Fall back to
-             round-robin on any failure (including a SKIP from a stale
-             prompt cache).
+          2. Ask the LLM with a short timeout. Fall back to round-robin
+             on any failure (including a SKIP from a stale prompt cache).
         """
         eligible = [p for p in personas if self._is_eligible(p, last_speaker, consecutive_count)]
-        if not eligible:
-            eligible = [p for p in personas if p.name != last_speaker] or personas
-
-        if len(eligible) == 1:
-            return eligible[0].name
 
         try:
             return await asyncio.wait_for(
@@ -103,7 +96,7 @@ class SpeakerSelector:
     @staticmethod
     def _round_robin(pool: list[PersonaAgent], last_speaker: str | None) -> PersonaAgent:
         others = [p for p in pool if p.name != last_speaker]
-        return others[0] if others else pool[0]
+        return others[0]
 
     # ------------------------------------------------------------------
     # LLM call + parse

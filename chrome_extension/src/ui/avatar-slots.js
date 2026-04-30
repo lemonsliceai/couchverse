@@ -2,9 +2,9 @@
  * Avatar slot DOM — everything that touches `.avatar-slot` elements.
  *
  * Each slot represents one persona's panel: still preview, live video
- * mount point, badge, captions stack, reactions overlay. The HTML
- * declares the slots up front (one per persona); this module fills
- * them with runtime content.
+ * mount point, badge, reactions overlay. The HTML declares the slots
+ * up front (one per persona); this module fills them with runtime
+ * content.
  */
 
 const $ = (sel) => document.querySelector(sel);
@@ -14,14 +14,33 @@ export function slotFor(personaName) {
   return document.querySelector(`.avatar-slot[data-name="${personaName}"]`);
 }
 
+// Tracks which LiveKit room currently owns each slot's mounted video.
+// Under the dual-room architecture two RoomControllers feed this same
+// registry, but the architecture guarantees one persona ↔ one room — so
+// the same slot should never be mounted from two different rooms. If
+// that invariant ever breaks, `mountAvatarVideo` warns loudly with both
+// room names rather than silently overwriting.
+const slotRoomOwners = new WeakMap();
+
 // Mount a freshly-attached LiveKit video element inside the slot's
 // .avatar-video container. Sizing/object-fit live in CSS — this stays
-// purely behavioral.
-export function mountAvatarVideo(slot, track) {
+// purely behavioral. `roomName` records which room the track came from
+// so a second room mounting into the same slot is detectable.
+export function mountAvatarVideo(slot, track, roomName = null) {
   const container = slot.querySelector(".avatar-video");
   if (!container) return;
+  const existingRoom = slotRoomOwners.get(slot);
+  if (roomName && existingRoom && existingRoom !== roomName) {
+    console.warn(
+      "[ext] avatar slot already owned by a different room — unexpected, expected one persona per room",
+      "persona=", slot.dataset.name,
+      "existingRoom=", existingRoom,
+      "incomingRoom=", roomName,
+    );
+  }
   const el = track.attach();
   container.replaceChildren(el);
+  if (roomName) slotRoomOwners.set(slot, roomName);
   // Swap the still preview for the live video. The `video-live` class
   // drives a fade-in on the video + fade-out on the still image so the
   // transition reads as the preview "animating into" the avatar.
@@ -34,9 +53,7 @@ export function resetAllSlots() {
     slot.classList.remove("speaking", "breathing", "video-live");
     const videoContainer = slot.querySelector(".avatar-video");
     if (videoContainer) videoContainer.replaceChildren();
-  }
-  for (const captions of document.querySelectorAll(".avatar-slot .captions")) {
-    captions.replaceChildren();
+    slotRoomOwners.delete(slot);
   }
 }
 
@@ -47,48 +64,6 @@ export function setSlotSpeaking(personaName, isSpeaking) {
   const slot = slotFor(personaName);
   if (!slot) return;
   slot.classList.toggle("speaking", isSpeaking);
-}
-
-// ── Captions ──
-//
-// Per-persona caption history kept here so the orchestration layer
-// doesn't need to thread a Map through every render call. The agent
-// currently doesn't publish transcripts (only commentary_start/end
-// + agent_ready), so this path is dormant — kept wired up so a future
-// transcript-forwarding addition can land without UI changes.
-
-const captionsByPersona = new Map();
-const MAX_CAPTIONS = 3;
-
-export function addCaption(personaName, text) {
-  if (!personaName || !text) return;
-  const slot = slotFor(personaName);
-  if (!slot) return;
-  const list = captionsByPersona.get(personaName) || [];
-  list.push(text);
-  while (list.length > MAX_CAPTIONS) list.shift();
-  captionsByPersona.set(personaName, list);
-  renderCaptions(slot, list);
-}
-
-export function clearCaptions() {
-  captionsByPersona.clear();
-}
-
-function renderCaptions(slot, list) {
-  const container = slot.querySelector(".captions");
-  if (!container) return;
-  // Build via DOM so caption text (which originates from agent LLM
-  // output) can never be interpreted as HTML — `textContent` short-
-  // circuits the parser entirely. Avoid `innerHTML` anywhere in this
-  // path even if the agent is trusted: defense in depth.
-  const bubbles = list.map((text) => {
-    const bubble = document.createElement("div");
-    bubble.className = "speech-bubble";
-    bubble.textContent = text;
-    return bubble;
-  });
-  container.replaceChildren(...bubbles);
 }
 
 // ── Floating reactions ──
