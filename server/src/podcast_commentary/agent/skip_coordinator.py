@@ -2,8 +2,8 @@
 
 The Chrome extension's "Skip commentary" button fires a ``skip`` control
 message. Naive handling — interrupt every persona — breaks the intro
-ritual, because a click landing between Fox's intro ending and Alien's
-intro starting would cut Alien off mid-sentence.
+ritual, because a click landing between one persona's intro ending and
+the next's intro starting would cut the next persona off mid-sentence.
 
 ``SkipCoordinator`` scopes interrupts to the set of phases the user
 *meant* to skip: only active commentary turns. Intros are protected by

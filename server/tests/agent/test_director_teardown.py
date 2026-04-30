@@ -28,7 +28,8 @@ import pytest
 from podcast_commentary.agent import director as director_module
 from podcast_commentary.agent.comedian import PersonaAgent
 from podcast_commentary.agent.director import Director, PersonaContext
-from podcast_commentary.agent.fox_config import load_config
+
+from ._stub_config import make_stub_config
 
 
 @pytest.fixture(autouse=True)
@@ -103,7 +104,7 @@ class _FakeConnector:
 
 
 def _make_persona(name: str) -> PersonaAgent:
-    return PersonaAgent(config=load_config(name))
+    return PersonaAgent(config=make_stub_config(name))
 
 
 def _build_director(
@@ -118,7 +119,7 @@ def _build_director(
     connector list (one per non-primary persona) so tests can drive
     events at any layer.
     """
-    persona_names = ["fox", "chaos_agent"]
+    persona_names = ["persona_a", "persona_b"]
     personas = [_make_persona(n) for n in persona_names]
 
     connectors = list(secondary_connectors or [])
@@ -224,7 +225,7 @@ async def test_avatar_disconnect_does_not_trip_latch(caplog):
     director, _personas, rooms, connectors = _build_director()
     primary_room = rooms[0]
 
-    avatar_identity = f"{director_module._AVATAR_IDENTITY_PREFIX}fox"
+    avatar_identity = f"{director_module._AVATAR_IDENTITY_PREFIX}persona_a"
     with caplog.at_level(logging.INFO, logger="podcast-commentary.director"):
         primary_room.emit("participant_disconnected", _FakeParticipant(avatar_identity))
 
@@ -338,7 +339,7 @@ async def test_heartbeat_watchdog_ignores_avatar_only_rooms(monkeypatch):
     director, _personas, rooms, _ = _build_director(
         user_heartbeat_timeout_s=0.2,
     )
-    avatar_identity = f"{director_module._AVATAR_IDENTITY_PREFIX}chaos_agent"
+    avatar_identity = f"{director_module._AVATAR_IDENTITY_PREFIX}persona_b"
     rooms[1].remote_participants[avatar_identity] = _FakeParticipant(avatar_identity)
     director._last_user_seen = time.monotonic()
 
@@ -374,8 +375,8 @@ def _capture_lifecycle_payload(records: list[logging.LogRecord]) -> dict | None:
 @pytest.mark.asyncio
 async def test_shutdown_emits_session_lifecycle_log_with_expected_fields(caplog):
     """One INFO line per session at teardown, JSON-formatted, no PII."""
-    avatar_startup_ms: dict[str, float] = {"fox": 1.234, "chaos_agent": 2.5}
-    persona_names = ["fox", "chaos_agent"]
+    avatar_startup_ms: dict[str, float] = {"persona_a": 1.234, "persona_b": 2.5}
+    persona_names = ["persona_a", "persona_b"]
     personas = [_make_persona(n) for n in persona_names]
     primary = _FakeRoom("room-primary")
     secondary = _FakeRoom("room-secondary")
@@ -399,10 +400,10 @@ async def test_shutdown_emits_session_lifecycle_log_with_expected_fields(caplog)
     assert payload is not None, "expected a session_lifecycle INFO log"
 
     assert payload["session_id"] == "sess-abc"
-    assert payload["primary_persona"] == "fox"
-    assert payload["secondary_personas"] == ["chaos_agent"]
+    assert payload["primary_persona"] == "persona_a"
+    assert payload["secondary_personas"] == ["persona_b"]
     assert sorted(payload["room_names"]) == ["room-primary", "room-secondary"]
-    assert payload["avatar_startup_ms"] == {"fox": 1234.0, "chaos_agent": 2500.0}
+    assert payload["avatar_startup_ms"] == {"persona_a": 1234.0, "persona_b": 2500.0}
     assert payload["total_turns"] == 7
     assert payload["end_reason"] == "user_disconnect"
 

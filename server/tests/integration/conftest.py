@@ -177,8 +177,9 @@ def integration_env(livekit_credentials: dict[str, str]) -> dict[str, str]:
     return {
         **livekit_credentials,
         "AGENT_NAME": f"couchverse-it-agent-{os.getpid()}",
-        "PERSONAS": "fox,chaos_agent",
-        "PRIMARY_PERSONA": "fox",
+        # Empty PERSONAS triggers fox_configs/ auto-discovery — keeps the
+        # integration suite from coupling to a specific shipped lineup.
+        "PERSONAS": "",
         # Required by the LiveKit plugins even though the integration
         # test stubs them — the plugin constructors verify the env var
         # is present at import time.

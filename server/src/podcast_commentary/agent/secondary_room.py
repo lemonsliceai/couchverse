@@ -32,7 +32,7 @@ class SecondaryRoomConnector:
     """Open and manage one secondary ``rtc.Room`` for a single persona.
 
     Usage:
-        connector = SecondaryRoomConnector(room_name, token, persona="alien")
+        connector = SecondaryRoomConnector(room_name, token, persona=name)
         room = await connector.connect()
         ...
         await connector.aclose()

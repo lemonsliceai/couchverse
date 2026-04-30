@@ -84,7 +84,7 @@ def _set_livekit_url(monkeypatch):
 @pytest.mark.asyncio
 async def test_connect_returns_room_and_exposes_property(fake_room_factory):
     rooms = fake_room_factory()
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="persona_a")
 
     room = await connector.connect()
 
@@ -96,7 +96,7 @@ async def test_connect_returns_room_and_exposes_property(fake_room_factory):
 
 @pytest.mark.asyncio
 async def test_room_property_before_connect_raises():
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="persona_a")
     with pytest.raises(RuntimeError):
         _ = connector.room
 
@@ -104,7 +104,7 @@ async def test_room_property_before_connect_raises():
 @pytest.mark.asyncio
 async def test_double_connect_raises(fake_room_factory):
     fake_room_factory()
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="persona_a")
     await connector.connect()
     with pytest.raises(RuntimeError):
         await connector.connect()
@@ -114,7 +114,7 @@ async def test_double_connect_raises(fake_room_factory):
 async def test_connect_failure_raises_secondary_room_connect_error(fake_room_factory):
     # rtc.ConnectError ≈ token-rejected / network failure.
     fake_room_factory(connect_exc=secondary_room.rtc.ConnectError("token rejected"))
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="bad", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="bad", persona="persona_a")
 
     with pytest.raises(SecondaryRoomConnectError) as exc_info:
         await connector.connect()
@@ -125,7 +125,7 @@ async def test_connect_failure_raises_secondary_room_connect_error(fake_room_fac
 @pytest.mark.asyncio
 async def test_connect_unexpected_exception_wrapped(fake_room_factory):
     fake_room_factory(connect_exc=OSError("network down"))
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="persona_a")
     with pytest.raises(SecondaryRoomConnectError):
         await connector.connect()
 
@@ -134,7 +134,7 @@ async def test_connect_unexpected_exception_wrapped(fake_room_factory):
 async def test_connect_without_livekit_url_raises(monkeypatch, fake_room_factory):
     fake_room_factory()
     monkeypatch.setattr(secondary_room.settings, "LIVEKIT_URL", None)
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="persona_a")
     with pytest.raises(SecondaryRoomConnectError):
         await connector.connect()
 
@@ -142,7 +142,7 @@ async def test_connect_without_livekit_url_raises(monkeypatch, fake_room_factory
 @pytest.mark.asyncio
 async def test_aclose_disconnects_room(fake_room_factory):
     rooms = fake_room_factory()
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="persona_a")
     await connector.connect()
 
     await connector.aclose()
@@ -155,7 +155,7 @@ async def test_aclose_disconnects_room(fake_room_factory):
 @pytest.mark.asyncio
 async def test_aclose_before_connect_is_noop(fake_room_factory):
     fake_room_factory()
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="persona_a")
     # Must not raise even though no room was opened.
     await connector.aclose()
 
@@ -163,7 +163,7 @@ async def test_aclose_before_connect_is_noop(fake_room_factory):
 @pytest.mark.asyncio
 async def test_aclose_swallows_disconnect_exception(fake_room_factory, caplog):
     rooms = fake_room_factory()
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="persona_a")
     await connector.connect()
 
     async def _boom() -> None:
@@ -180,7 +180,7 @@ async def test_aclose_swallows_disconnect_exception(fake_room_factory, caplog):
 @pytest.mark.asyncio
 async def test_disconnect_event_logged_with_persona(fake_room_factory, caplog):
     rooms = fake_room_factory()
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="persona_a")
     await connector.connect()
 
     with caplog.at_level(logging.INFO, logger=secondary_room.logger.name):
@@ -188,14 +188,14 @@ async def test_disconnect_event_logged_with_persona(fake_room_factory, caplog):
 
     matched = [rec for rec in caplog.records if "disconnected" in rec.message]
     assert matched, "expected a disconnected log line"
-    assert "persona=alien" in matched[-1].message
+    assert "persona=persona_a" in matched[-1].message
     assert "room=couch-b" in matched[-1].message
 
 
 @pytest.mark.asyncio
 async def test_reconnect_events_logged(fake_room_factory, caplog):
     rooms = fake_room_factory()
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="persona_a")
     await connector.connect()
 
     with caplog.at_level(logging.INFO, logger=secondary_room.logger.name):
@@ -203,14 +203,14 @@ async def test_reconnect_events_logged(fake_room_factory, caplog):
         rooms[0].emit("reconnected")
 
     messages = [rec.message for rec in caplog.records]
-    assert any("reconnecting" in m and "persona=alien" in m for m in messages)
-    assert any("reconnected" in m and "persona=alien" in m for m in messages)
+    assert any("reconnecting" in m and "persona=persona_a" in m for m in messages)
+    assert any("reconnected" in m and "persona=persona_a" in m for m in messages)
 
 
 @pytest.mark.asyncio
 async def test_participant_join_leave_logged(fake_room_factory, caplog):
     rooms = fake_room_factory()
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="persona_a")
     await connector.connect()
 
     p = _FakeParticipant(identity="user-42", kind="standard")
@@ -229,7 +229,7 @@ async def test_forced_disconnect_path_keeps_property_accessible(fake_room_factor
     connector hasn't called ``aclose()`` yet. The connector should still
     expose ``.room`` (so the orchestrator can inspect state) until aclose()."""
     rooms = fake_room_factory()
-    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="alien")
+    connector = SecondaryRoomConnector(room_name="couch-b", agent_token="tok", persona="persona_a")
     await connector.connect()
 
     rooms[0].emit("disconnected", "SERVER_KICKED")

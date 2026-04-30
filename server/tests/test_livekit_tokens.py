@@ -33,16 +33,16 @@ def _decode(token: str) -> dict:
 
 
 def test_token_includes_identity_and_room():
-    token = mint_agent_token("couch-bravo", "agent-alien-sess123")
+    token = mint_agent_token("couch-bravo", "agent-persona_a-sess123")
     claims = _decode(token)
 
-    assert claims["sub"] == "agent-alien-sess123"
-    assert claims["name"] == "agent-alien-sess123"
+    assert claims["sub"] == "agent-persona_a-sess123"
+    assert claims["name"] == "agent-persona_a-sess123"
     assert claims["video"]["room"] == "couch-bravo"
 
 
 def test_token_grants_required_flags():
-    token = mint_agent_token("couch-bravo", "agent-alien-sess123")
+    token = mint_agent_token("couch-bravo", "agent-persona_a-sess123")
     video = _decode(token)["video"]
 
     # Acceptance criteria: roomJoin, canPublish, canSubscribe,
@@ -58,7 +58,7 @@ def test_token_kind_is_agent():
     """``kind=agent`` makes the participant register as
     ``PARTICIPANT_KIND_AGENT``. This is what lets the dispatch dashboard
     / RPC layer correlate the connection with the dispatched job."""
-    token = mint_agent_token("couch-bravo", "agent-alien-sess123")
+    token = mint_agent_token("couch-bravo", "agent-persona_a-sess123")
     claims = _decode(token)
 
     assert claims["kind"] == "agent"
@@ -67,7 +67,7 @@ def test_token_kind_is_agent():
 def test_token_ttl_exceeds_session_max_with_buffer():
     """TTL must be ≥ session max with a buffer (acceptance criterion)."""
     before = datetime.datetime.now(datetime.timezone.utc)
-    token = mint_agent_token("couch-bravo", "agent-alien-sess123")
+    token = mint_agent_token("couch-bravo", "agent-persona_a-sess123")
     after = datetime.datetime.now(datetime.timezone.utc)
 
     claims = _decode(token)
@@ -92,20 +92,20 @@ def test_token_ttl_exceeds_session_max_with_buffer():
 def test_token_room_claim_scoped_per_call():
     """Each call must produce a token scoped to the requested room — the
     helper must not leak state between calls."""
-    a = _decode(mint_agent_token("couch-alpha", "agent-fox-1"))
-    b = _decode(mint_agent_token("couch-bravo", "agent-alien-1"))
+    a = _decode(mint_agent_token("couch-alpha", "agent-persona_a-1"))
+    b = _decode(mint_agent_token("couch-bravo", "agent-persona_b-1"))
 
     assert a["video"]["room"] == "couch-alpha"
     assert b["video"]["room"] == "couch-bravo"
-    assert a["sub"] == "agent-fox-1"
-    assert b["sub"] == "agent-alien-1"
+    assert a["sub"] == "agent-persona_a-1"
+    assert b["sub"] == "agent-persona_b-1"
 
 
 def test_token_signed_with_configured_secret():
     """Smoke test that the token is actually signable + verifiable with
     the configured secret — guards against an accidental rewrite that
     drops ``with_grants`` or breaks the ``AccessToken`` chain."""
-    token = mint_agent_token("couch-bravo", "agent-alien-sess123")
+    token = mint_agent_token("couch-bravo", "agent-persona_a-sess123")
     decoded = jwt.decode(
         token,
         key="test-api-secret",

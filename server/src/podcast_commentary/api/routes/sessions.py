@@ -59,15 +59,10 @@ def _persona_room_name(session_id: str, persona: str) -> str:
 @router.post("/api/sessions", response_model=CreateSessionResponse)
 async def create_session_route(request: CreateSessionRequest):
     persona_names = _resolve_persona_names()
-    primary_persona = settings.PRIMARY_PERSONA
-    if primary_persona not in persona_names:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                f"PRIMARY_PERSONA={primary_persona!r} is not in PERSONAS={persona_names}. "
-                "Update server config."
-            ),
-        )
+    # Primary is whichever persona is listed first in PERSONAS — that's
+    # the room the LiveKit dispatch lands in and whose timing drives
+    # cadence. Reorder PERSONAS to change it; no separate setting.
+    primary_persona = persona_names[0]
 
     session_id = str(uuid4())
     user_identity = f"user-{uuid4().hex[:8]}"

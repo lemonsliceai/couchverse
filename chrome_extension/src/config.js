@@ -36,8 +36,7 @@ export const DUCK_HOLD_MS = 500;
 // loudness; this normalizes them at the client so the mix is balanced.
 // Add new personas here as they're introduced.
 export const PERSONA_TRIM_GAIN = {
-  fox: 1.0, // Dave voice — our reference level
-  chaos_agent: 1.6, // Fanz ships noticeably softer than Dave
+  alien: 1.0, // Dave voice — our reference level
 };
 export const DEFAULT_PERSONA_TRIM = 1.0;
 

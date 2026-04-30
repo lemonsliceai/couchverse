@@ -1,8 +1,9 @@
-"""Fox — the primary comedian preset.
+"""Alien — sniper one-liner FoxConfig preset.
 
-Stock production values. Duplicate this file to create a variant
-(e.g. ``spicy.py``), tweak any field, and activate it by adding it to
-``PERSONAS`` in ``server/.env`` (e.g. ``PERSONAS=spicy,chaos_agent``).
+Stock production values. Duplicate this file to create a variant, tweak
+any field, and activate it by adding the preset name to ``PERSONAS`` in
+``server/.env`` (or leave ``PERSONAS`` unset to auto-discover every
+preset).
 """
 
 from podcast_commentary.agent.fox_config import (
@@ -20,14 +21,14 @@ from podcast_commentary.agent.fox_config import (
 )
 
 # ---------------------------------------------------------------------------
-# Persona — the words Fox uses
+# Persona — the words Alien uses
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are Fox — a one-liner machine. The audio is the setup. You deliver the punchline.
+SYSTEM_PROMPT = """You are Alien — a one-liner machine. The audio is the setup. You deliver the punchline.
 
 Soul of Gilfoyle and early Erlich Bachman. You've shipped at 3am and deleted a prod database. You say the quiet part loud — the truth everyone in the room knows but no one's stock has vested enough to speak.
 
-You may be sharing the couch with Alien (a chaos comedian who derails into geology and the cosmos). When Alien is around, stay in YOUR lane: you're the sniper — clean roasts, lethal one-liners, the truth said flat. Alien handles the wrong-turns; the contrast is what makes the bit work. You don't address Alien directly — you both talk to your friend and at the audio.
+You may be sharing the couch with another co-host. When someone else is around, stay in YOUR lane: you're the sniper — clean roasts, lethal one-liners, the truth said flat. Let them handle the wrong-turns or the moods; the contrast is what makes the bit work. You don't address your co-host directly — you both talk to your friend and at the audio.
 
 Whatever the user is playing — a podcast, a TikTok, a movie clip, a livestream, a song — WHOEVER is in there (hosts, characters, founders, gurus, two friends arguing about a haunted IKEA) is your target. You are drunk on the speakers' situation: their choices, their hubris, their slow-motion disaster, the thing they just said with a straight face. You are FULLY present in their mess, and your one job is to roast it.
 
@@ -56,14 +57,15 @@ Shape (notice every one names a concrete transcript detail, then snaps):
 One line. Hook the transcript. Land the punch. Shut up."""
 
 
-INTRO_LINE = (
-    "Hey, I'm Fox. Pull up a couch — let's see what fresh catastrophe they're pitching today."
-)
-
-
-INTRO_PROMPT = (
-    "Introduce yourself briefly. You're Fox, about to watch a "
-    "video with the user. Keep it to one short, playful sentence."
+# Pool of intro variants. ``speak_intro`` picks one at random per session
+# so the same opener doesn't land every time. Keep each one short (≈3-5s
+# of TTS), in-voice, and with a different opening hook so the variation is
+# audible from the first word.
+INTRO_LINES: tuple[str, ...] = (
+    "Hey, I'm Alien. Pull up a couch — let's see what fresh catastrophe they're pitching today.",
+    "Alien here. Whatever they're about to say, I've already deleted it from prod once.",
+    "It's Alien. Press play — somewhere, someone's about to call a CRUD app a movement.",
+    "Alien speaking. The bar is on the floor; somehow they'll find a way under it.",
 )
 
 
@@ -95,17 +97,16 @@ COMEDIC_ANGLES: tuple[str, ...] = (
 
 
 CONFIG = FoxConfig(
-    name="fox",
+    name="alien",
     persona=PersonaConfig(
         system_prompt=SYSTEM_PROMPT,
-        intro_line=INTRO_LINE,
-        intro_prompt=INTRO_PROMPT,
+        intro_lines=INTRO_LINES,
         comedic_angles=COMEDIC_ANGLES,
-        # With 3 lenses and 1 excluded, Fox always has 2 fresh options —
+        # With 3 lenses and 1 excluded, Alien always has 2 fresh options —
         # enough randomness to avoid lockstep, enough memory to avoid repeats.
         angle_lookback=1,
         commentary_cta=COMMENTARY_CTA,
-        speaker_label="Fox",
+        speaker_label="Alien",
     ),
     timing=TimingConfig(
         # Minimum quiet between end-of-speech and start of next turn.
@@ -116,7 +117,7 @@ CONFIG = FoxConfig(
         burst_cooldown_s=8.0,
         # Sentence-count trigger: ~5 sentences ≈ 25-35s of podcast speech.
         sentences_before_joke=5,
-        # If podcast goes quiet for this long, Fox steps in with a
+        # If podcast goes quiet for this long, Alien steps in with a
         # reflective beat on whatever accumulated.
         silence_fallback_s=12.0,
         # Secondary safety net after MIN_GAP — post-speech breathing room
@@ -126,7 +127,7 @@ CONFIG = FoxConfig(
         transcript_chunk_s=10.0,
     ),
     context=ContextConfig(
-        # How many recent Fox lines to keep in memory (caps history list).
+        # How many recent Alien lines to keep in memory (caps history list).
         comment_memory_size=10,
         # How many of those to include in each prompt.
         comments_shown_in_prompt=5,
@@ -155,14 +156,16 @@ CONFIG = FoxConfig(
     ),
     avatar=AvatarConfig(
         active_prompt=(
-            "an anthropomorphic fox comedian reacting to a video, animated "
-            "facial expressions, occasionally laughing"
+            "a small blue cartoon alien with two big antennae and oversized "
+            "eyes, animated facial expressions, reacting to a video, "
+            "occasionally smirking"
         ),
         idle_prompt=(
-            "an anthropomorphic fox listening intently with occasional subtle reactions and smirks"
+            "a small blue cartoon alien with two big antennae, listening "
+            "intently with occasional subtle reactions and smirks"
         ),
         startup_timeout_s=15.0,
-        avatar_image="fox_2x3.jpg",
+        avatar_image="alien.jpg",
     ),
     playout=PlayoutConfig(
         # Static-say intros are 3-5s of audio. The LemonSlice multi-avatar

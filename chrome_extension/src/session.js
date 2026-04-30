@@ -421,7 +421,7 @@ export class SessionLifecycle {
     const btn = $("#skip-btn");
     if (!btn) return;
     // Disabled when nobody is mid-commentary OR when an intro is in
-    // flight — intros are non-skippable so the Fox → Alien ritual
+    // flight — intros are non-skippable so the sequenced intro ritual
     // always plays out.
     btn.disabled = this._speakingNow.size === 0 || this._introNow.size > 0;
   }
@@ -432,8 +432,8 @@ export class SessionLifecycle {
     if (this._state !== SessionState.LIVE) return;
     if (!this._primaryController()?.isConnected()) return;
     // Pausing the media cuts the tab-audio track the agent relies on
-    // for STT, so there's nothing left for Fox to react to. End the
-    // session rather than leave the avatar streaming into silence.
+    // for STT, so there's nothing left for the personas to react to.
+    // End the session rather than leave the avatar streaming into silence.
     if (!msg.playing) {
       this.end().catch((err) => console.warn("[ext] auto-end on pause failed:", err));
       return;

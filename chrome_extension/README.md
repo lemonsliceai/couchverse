@@ -2,7 +2,7 @@
 
 # Couchverse — Chrome Extension
 
-Chrome MV3 extension that adds two AI co-hosts — **Fox** and **Alien** — to a side panel while you watch or listen in the browser.
+Chrome MV3 extension that adds two AI co-hosts — **Cat girl** and **Alien** — to a side panel while you watch or listen in the browser.
 
 [![Chrome 116+](https://img.shields.io/badge/Chrome-116%2B-4285F4?logo=googlechrome&logoColor=white)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Manifest V3](https://img.shields.io/badge/Manifest-V3-34A853)](https://developer.chrome.com/docs/extensions/mv3/intro/)
@@ -147,7 +147,7 @@ curl http://localhost:8080/health
 2. Click the Couchverse icon. The side panel opens.
 3. The extension auto-detects the tab's URL and title.
 4. Click **Start Couchverse**.
-5. Fox and Alien appear and start reacting.
+5. Cat girl and Alien appear and start reacting.
 6. Adjust volume sliders as needed.
 
 ## Configuring the API URL
@@ -234,7 +234,7 @@ First podcast audio frame pushed to STT buffer
 Confirm:
 
 - Side panel shows "Live" status (green dot).
-- Fox status bar shows "Listening" with a headphone emoji.
+- Persona status bar shows "Listening" with a headphone emoji.
 - Agent logs show `Podcast pipeline initialised ...`.
 - After 10–20 seconds, the hosts deliver the first commentary.
 - Speech bubbles appear over each avatar.
@@ -248,7 +248,7 @@ Confirm:
 |---|---|---|
 | "Session creation failed" | API server not running | Start the API: `uv run uvicorn ...` |
 | Side panel shows "Connecting" forever | LiveKit credentials wrong or agent not running | Check `LIVEKIT_URL` / `KEY` / `SECRET` in `.env`, start the agent |
-| Fox or Alien avatar doesn't appear | `AVATAR_BASE_URL` not reachable from LemonSlice | Use a public URL or ngrok tunnel |
+| Persona avatar doesn't appear | `AVATAR_BASE_URL` not reachable from LemonSlice | Use a public URL or ngrok tunnel |
 | No commentary after 30 s | Tab audio not reaching agent | Check agent logs for "podcast audio frame" messages |
 | "Failed to capture tab audio" | Chrome permission issue | Make sure the target tab is the active tab when clicking start |
 
@@ -265,7 +265,7 @@ chrome_extension/
 │   └── sidepanel.js     # Main logic: LiveKit, audio capture, avatars, controls
 ├── dist/
 │   └── sidepanel.js     # Bundled output (built by esbuild)
-├── icons/               # Extension icons (fox and alien avatars)
+├── icons/               # Extension icons (persona preview avatars)
 ├── build.js             # esbuild bundler config
 └── package.json         # Dependencies: livekit-client, esbuild
 ```

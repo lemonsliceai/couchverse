@@ -34,7 +34,7 @@ class RoomState:
         # this gate, personas default to LISTENING after ``on_enter`` and
         # the silence loop / sentence trigger / watchdog would happily
         # fire commentary in the window before the first intro starts —
-        # meaning Fox would deliver a punchline INSTEAD OF its intro.
+        # meaning a persona would deliver a punchline INSTEAD OF its intro.
         self.intros_done: asyncio.Event = asyncio.Event()
         # Monotonic timestamp of the most recent commentary turn (intros
         # do not count). Used by the watchdog to detect dead air.

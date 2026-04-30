@@ -59,7 +59,7 @@ Each PersonaAgent uses a `FoxPhase` enum: INTRO → LISTENING → COMMENTATING. 
 
 ## Timing constants (commentary.py)
 
-- `MIN_GAP = 5s` — minimum silence between Fox finishing and starting next comment
+- `MIN_GAP = 5s` — minimum silence between a persona finishing and starting next comment
 - `BURST_WINDOW = 60s`, `BURST_MAX = 8` — max 8 comments per minute
 - `BURST_COOLDOWN = 8s` — forced pause after hitting burst limit
 - `POST_SPEECH_DELAY = 7s` — wait after podcast speech ends before evaluating timers

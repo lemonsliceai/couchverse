@@ -11,10 +11,10 @@ The shape::
     {
       "session_id": "...",
       "video_url": "...",
-      "primary_persona": "fox",
-      "all_personas": ["fox", "alien"],
+      "primary_persona": "<primary>",
+      "all_personas": ["<primary>", "<secondary>", ...],
       "secondary_rooms": [
-        { "persona": "alien", "room_name": "...", "agent_token": "..." }
+        { "persona": "<secondary>", "room_name": "...", "agent_token": "..." }
       ]
     }
 

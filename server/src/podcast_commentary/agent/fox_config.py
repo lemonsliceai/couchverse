@@ -1,17 +1,24 @@
-"""FoxConfig — every knob that shapes Fox's behaviour, in one place.
+"""FoxConfig — every knob that shapes a persona's behaviour, in one place.
 
 Presets live in ``fox_configs/<name>.py`` and each export a top-level
 ``CONFIG: FoxConfig``. The active presets are selected by the ``PERSONAS``
-env var (comma-separated list, defaults to ``"fox,chaos_agent"``); switch
-by editing that var in ``server/.env`` and restarting the agent.
+env var (comma-separated list); when unset, every preset in
+``fox_configs/`` is auto-discovered in sorted order. Switch by editing
+that var in ``server/.env`` and restarting the agent.
+
+The schema is named ``FoxConfig`` for historical reasons; it governs every
+persona — the name is historical, not preset-specific.
 
 To add a new preset:
-  1. Copy ``fox_configs/fox.py`` to ``fox_configs/<my_preset>.py``.
-  2. Edit any field you want to tune.
-  3. Add ``<my_preset>`` to ``PERSONAS`` in ``server/.env``.
+  1. Copy any existing file in ``fox_configs/`` to
+     ``fox_configs/<my_preset>.py``.
+  2. Edit any field you want to tune (start with ``name`` and the
+     ``persona``/``avatar``/``tts`` blocks).
+  3. Add ``<my_preset>`` to ``PERSONAS`` in ``server/.env`` (or leave it
+     unset to load every preset including this one).
   4. Restart the agent.
 
-Every module that configures Fox's behaviour reads from the module-level
+Every module that configures persona behaviour reads from the module-level
 ``CONFIG`` exported here — no other file should hardcode behaviour knobs.
 """
 
@@ -34,29 +41,29 @@ logger = logging.getLogger("podcast-commentary.fox_config")
 
 @dataclass(frozen=True)
 class PersonaConfig:
-    """The words Fox uses: system prompt, intro, CTAs, comedic angles."""
+    """The words a persona uses: system prompt, intro, CTAs, comedic angles."""
 
     system_prompt: str
-    # Static intro line — spoken verbatim via ``session.say`` so intros are
-    # short, predictable, and immune to the LemonSlice multi-avatar
-    # ``lk.playback_finished`` RPC flakiness that bites the longer
-    # LLM-generated intros. Intros should be the most reliable thing in
-    # the show — use ``intro_prompt`` for variant presets that can afford
-    # to generate.
-    intro_line: str
-    intro_prompt: str
+    # Pool of pre-authored intro lines. ``speak_intro`` picks one at random
+    # per session so the same persona doesn't open with the same sentence
+    # every time. Spoken verbatim via ``session.say`` — no LLM call — so
+    # intros stay short, predictable, and well inside the playout-timeout
+    # window that bounds the LemonSlice multi-avatar
+    # ``lk.playback_finished`` RPC fallback. Each entry must be on-brand
+    # and short enough to fit ``PlayoutConfig.intro_timeout_s``.
+    intro_lines: tuple[str, ...]
     comedic_angles: tuple[str, ...]
     angle_lookback: int
     commentary_cta: str
     # Display name shown to the audience and used by the Director's
-    # speaker-selection LLM (e.g. "Fox", "Alien"). Falls back to the
-    # config's ``name`` field when empty.
+    # speaker-selection LLM. Falls back to the config's ``name`` field
+    # when empty.
     speaker_label: str = ""
 
 
 @dataclass(frozen=True)
 class TimingConfig:
-    """When Fox is allowed to talk and how often."""
+    """When a persona is allowed to talk and how often."""
 
     min_silence_between_jokes_s: float
     burst_window_s: float
@@ -70,7 +77,7 @@ class TimingConfig:
 
 @dataclass(frozen=True)
 class ContextConfig:
-    """How much recent context Fox carries between turns."""
+    """How much recent context a persona carries between turns."""
 
     comment_memory_size: int
     comments_shown_in_prompt: int
@@ -106,10 +113,9 @@ class AvatarConfig:
     active_prompt: str
     idle_prompt: str
     startup_timeout_s: float
-    # Filename of this persona's avatar image served under ``/static/``
-    # (e.g. ``"fox_2x3.jpg"``). The full URL is built by joining
-    # ``settings.AVATAR_BASE_URL`` with this filename — see
-    # ``AvatarConfig.avatar_url``.
+    # Filename of this persona's avatar image served under ``/static/``.
+    # The full URL is built by joining ``settings.AVATAR_BASE_URL`` with
+    # this filename — see ``AvatarConfig.avatar_url``.
     avatar_image: str = ""
 
     @property
@@ -171,7 +177,7 @@ class SamplingConfig:
 
 @dataclass(frozen=True)
 class FoxConfig:
-    """All tunable Fox behaviour, grouped by subsystem."""
+    """All tunable persona behaviour, grouped by subsystem."""
 
     name: str
     persona: PersonaConfig
@@ -213,11 +219,45 @@ def load_config(name: str) -> FoxConfig:
     return cfg
 
 
+def _discover_preset_names() -> list[str]:
+    """All preset module names available in ``fox_configs/``, sorted.
+
+    Used as the default lineup when ``PERSONAS`` is empty so the agent
+    has no character names baked into code — every shipped preset is
+    picked up automatically.
+    """
+    package = importlib.import_module(_PRESET_PACKAGE)
+    pkg_path = getattr(package, "__path__", None)
+    if not pkg_path:
+        return []
+    import pkgutil
+
+    return sorted(
+        info.name
+        for info in pkgutil.iter_modules(pkg_path)
+        if not info.ispkg and not info.name.startswith("_")
+    )
+
+
 def _resolve_persona_names() -> list[str]:
-    """Return the persona names to load, in order, from ``PERSONAS``."""
-    raw = (settings.PERSONAS or "fox").strip()
-    names = [n.strip() for n in raw.split(",") if n.strip()]
-    return names or ["fox"]
+    """Return the persona names to load, in order.
+
+    ``PERSONAS`` (comma-separated) wins when set. Otherwise fall back to
+    every preset in ``fox_configs/``, sorted, so adding a preset file is
+    enough to activate it during local dev.
+    """
+    raw = (settings.PERSONAS or "").strip()
+    if raw:
+        names = [n.strip() for n in raw.split(",") if n.strip()]
+        if names:
+            return names
+    discovered = _discover_preset_names()
+    if not discovered:
+        raise RuntimeError(
+            "no FoxConfig presets found — set PERSONAS or add a module to "
+            "server/src/podcast_commentary/agent/fox_configs/"
+        )
+    return discovered
 
 
 def load_active_configs() -> list[FoxConfig]:
@@ -226,7 +266,7 @@ def load_active_configs() -> list[FoxConfig]:
 
 
 def load_active_config() -> FoxConfig:
-    """First persona only — kept for back-compat with the single-Fox path."""
+    """First persona only — kept for back-compat with the single-persona path."""
     return load_active_configs()[0]
 
 

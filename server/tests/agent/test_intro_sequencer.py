@@ -20,9 +20,10 @@ import pytest
 from livekit import rtc
 
 from podcast_commentary.agent.comedian import PersonaAgent
-from podcast_commentary.agent.fox_config import load_config
 from podcast_commentary.agent.intro_sequencer import IntroSequencer, IntroStatus
 from podcast_commentary.agent.room_state import RoomState
+
+from ._stub_config import make_stub_config
 
 
 @pytest.fixture(autouse=True)
@@ -117,7 +118,7 @@ def _make_persona_with_short_avatar_timeout(name: str, timeout_s: float) -> Pers
     that long before SKIPPING. Use ``dataclasses.replace`` so the test
     fails fast (~0.5s) when the wiring regresses.
     """
-    base = load_config(name)
+    base = make_stub_config(name)
     short_avatar = dataclasses.replace(base.avatar, startup_timeout_s=timeout_s)
     short_config = dataclasses.replace(base, avatar=short_avatar)
     return PersonaAgent(config=short_config)
@@ -134,43 +135,43 @@ def _video_avatar_participant(persona_name: str) -> _FakeParticipant:
 
 @pytest.mark.asyncio
 async def test_intro_sequencer_uses_per_persona_room_for_avatar_ready():
-    """Regression: chaos_agent's intro must observe its avatar in its own
-    room, not the primary room.
+    """Regression: a secondary persona's intro must observe its avatar in
+    its own room, not the primary room.
 
-    Pre-fix the sequencer always watched the primary room; the
-    chaos_agent avatar (in the secondary room) was invisible and the
-    intro fell through to SKIPPED after the startup_timeout_s window.
-    With the fix, both personas' intros reach DONE because each
-    avatar-ready gate looks at the right room.
+    Pre-fix the sequencer always watched the primary room; the secondary
+    persona's avatar (in the secondary room) was invisible and the intro
+    fell through to SKIPPED after the startup_timeout_s window. With the
+    fix, both personas' intros reach DONE because each avatar-ready gate
+    looks at the right room.
     """
-    fox = _make_persona_with_short_avatar_timeout("fox", timeout_s=0.5)
-    alien = _make_persona_with_short_avatar_timeout("chaos_agent", timeout_s=0.5)
+    primary = _make_persona_with_short_avatar_timeout("persona_a", timeout_s=0.5)
+    secondary = _make_persona_with_short_avatar_timeout("persona_b", timeout_s=0.5)
 
     # Each persona's avatar lives in its OWN room. If the sequencer
-    # collapses to one room it will be unable to find chaos_agent's
+    # collapses to one room it will be unable to find the secondary's
     # avatar and the test will SKIPPED-fail.
-    fox_room = _FakeRoom("session-fox")
-    alien_room = _FakeRoom("session-chaos_agent")
-    fox_avatar = _video_avatar_participant("fox")
-    alien_avatar = _video_avatar_participant("chaos_agent")
-    fox_room.remote_participants[fox_avatar.identity] = fox_avatar
-    alien_room.remote_participants[alien_avatar.identity] = alien_avatar
+    primary_room = _FakeRoom("session-persona_a")
+    secondary_room = _FakeRoom("session-persona_b")
+    primary_avatar = _video_avatar_participant("persona_a")
+    secondary_avatar = _video_avatar_participant("persona_b")
+    primary_room.remote_participants[primary_avatar.identity] = primary_avatar
+    secondary_room.remote_participants[secondary_avatar.identity] = secondary_avatar
 
     # Stub out the parts of PersonaAgent that need a real AgentSession.
     # `speak_intro` only has to return a non-None sentinel so the
     # sequencer doesn't take the abort branch; the no-op waiter then
     # resolves the playout instantly.
-    fox.speak_intro = lambda: _FakeSpeechHandle()  # type: ignore[assignment]
-    alien.speak_intro = lambda: _FakeSpeechHandle()  # type: ignore[assignment]
+    primary.speak_intro = lambda: _FakeSpeechHandle()  # type: ignore[assignment]
+    secondary.speak_intro = lambda: _FakeSpeechHandle()  # type: ignore[assignment]
 
     sequencer = IntroSequencer(
-        personas=[fox, alien],
-        rooms={fox.name: fox_room, alien.name: alien_room},
+        personas=[primary, secondary],
+        rooms={primary.name: primary_room, secondary.name: secondary_room},
         avatar_identities={
-            fox.name: fox_avatar.identity,
-            alien.name: alien_avatar.identity,
+            primary.name: primary_avatar.identity,
+            secondary.name: secondary_avatar.identity,
         },
-        room_state=RoomState([fox, alien]),
+        room_state=RoomState([primary, secondary]),
         control=_NoopControlChannel(),  # type: ignore[arg-type]
         playout_waiter=_NoopPlayoutWaiter(),  # type: ignore[arg-type]
     )
@@ -179,8 +180,8 @@ async def test_intro_sequencer_uses_per_persona_room_for_avatar_ready():
     # the per-persona wiring fails in <1s instead of stalling the suite.
     await asyncio.wait_for(sequencer.run(), timeout=2.0)
 
-    assert sequencer.status(fox.name) is IntroStatus.DONE
-    assert sequencer.status(alien.name) is IntroStatus.DONE
+    assert sequencer.status(primary.name) is IntroStatus.DONE
+    assert sequencer.status(secondary.name) is IntroStatus.DONE
 
 
 @pytest.mark.asyncio
@@ -192,34 +193,34 @@ async def test_intro_sequencer_skips_persona_whose_avatar_never_publishes():
     Pins the existing fail-soft behaviour so a future timeout-tightening
     refactor can't accidentally hang the show on a missing avatar.
     """
-    fox = _make_persona_with_short_avatar_timeout("fox", timeout_s=0.2)
-    alien = _make_persona_with_short_avatar_timeout("chaos_agent", timeout_s=0.2)
+    primary = _make_persona_with_short_avatar_timeout("persona_a", timeout_s=0.2)
+    secondary = _make_persona_with_short_avatar_timeout("persona_b", timeout_s=0.2)
 
-    fox_room = _FakeRoom("session-fox")
-    alien_room = _FakeRoom("session-chaos_agent")
-    fox_avatar = _video_avatar_participant("fox")
-    fox_room.remote_participants[fox_avatar.identity] = fox_avatar
-    # alien_room intentionally empty — chaos_agent's avatar never publishes.
+    primary_room = _FakeRoom("session-persona_a")
+    secondary_room = _FakeRoom("session-persona_b")
+    primary_avatar = _video_avatar_participant("persona_a")
+    primary_room.remote_participants[primary_avatar.identity] = primary_avatar
+    # secondary_room intentionally empty — its avatar never publishes.
 
-    fox.speak_intro = lambda: _FakeSpeechHandle()  # type: ignore[assignment]
-    alien.speak_intro = lambda: _FakeSpeechHandle()  # type: ignore[assignment]
+    primary.speak_intro = lambda: _FakeSpeechHandle()  # type: ignore[assignment]
+    secondary.speak_intro = lambda: _FakeSpeechHandle()  # type: ignore[assignment]
 
     sequencer = IntroSequencer(
-        personas=[fox, alien],
-        rooms={fox.name: fox_room, alien.name: alien_room},
+        personas=[primary, secondary],
+        rooms={primary.name: primary_room, secondary.name: secondary_room},
         avatar_identities={
-            fox.name: fox_avatar.identity,
-            alien.name: f"lemonslice-avatar-{alien.name}",
+            primary.name: primary_avatar.identity,
+            secondary.name: f"lemonslice-avatar-{secondary.name}",
         },
-        room_state=RoomState([fox, alien]),
+        room_state=RoomState([primary, secondary]),
         control=_NoopControlChannel(),  # type: ignore[arg-type]
         playout_waiter=_NoopPlayoutWaiter(),  # type: ignore[arg-type]
     )
 
     await asyncio.wait_for(sequencer.run(), timeout=2.0)
 
-    assert sequencer.status(fox.name) is IntroStatus.DONE
-    assert sequencer.status(alien.name) is IntroStatus.SKIPPED
+    assert sequencer.status(primary.name) is IntroStatus.DONE
+    assert sequencer.status(secondary.name) is IntroStatus.SKIPPED
 
 
 def test_intro_sequencer_rejects_missing_room_mapping():
@@ -227,18 +228,18 @@ def test_intro_sequencer_rejects_missing_room_mapping():
     falling back to a primary-room watcher is the bug we're fixing, so
     the constructor must refuse to build that footgun.
     """
-    fox = _make_persona_with_short_avatar_timeout("fox", timeout_s=0.5)
-    alien = _make_persona_with_short_avatar_timeout("chaos_agent", timeout_s=0.5)
+    primary = _make_persona_with_short_avatar_timeout("persona_a", timeout_s=0.5)
+    secondary = _make_persona_with_short_avatar_timeout("persona_b", timeout_s=0.5)
 
     with pytest.raises(ValueError, match="missing room mapping"):
         IntroSequencer(
-            personas=[fox, alien],
-            rooms={fox.name: _FakeRoom("session-fox")},  # alien missing
+            personas=[primary, secondary],
+            rooms={primary.name: _FakeRoom("session-persona_a")},  # secondary missing
             avatar_identities={
-                fox.name: f"lemonslice-avatar-{fox.name}",
-                alien.name: f"lemonslice-avatar-{alien.name}",
+                primary.name: f"lemonslice-avatar-{primary.name}",
+                secondary.name: f"lemonslice-avatar-{secondary.name}",
             },
-            room_state=RoomState([fox, alien]),
+            room_state=RoomState([primary, secondary]),
             control=_NoopControlChannel(),  # type: ignore[arg-type]
             playout_waiter=_NoopPlayoutWaiter(),  # type: ignore[arg-type]
         )

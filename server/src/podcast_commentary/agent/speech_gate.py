@@ -1,4 +1,4 @@
-"""Authoritative "is Fox speaking?" gate.
+"""Authoritative "is this persona speaking?" gate.
 
 Owns the current `SpeechHandle` and exposes a `SpeechHandle.done()`-backed
 `is_speaking` property. Every producer that wants to speak (the silence loop,
@@ -21,12 +21,24 @@ from livekit.agents.voice import AgentSession, SpeechHandle
 
 logger = logging.getLogger("podcast-commentary.speech_gate")
 
+# Framework raises a bare RuntimeError with one of these prefixes when the
+# session has either not started or is being torn down. Both mean "no
+# session to speak into" — we no-op rather than crash the producer task.
+# (See livekit/agents agent_session.py: "AgentSession isn't running" and
+# "AgentSession is closing, cannot use say()" / "...generate_reply()".)
+_SESSION_UNAVAILABLE_MARKERS = ("AgentSession isn't running", "AgentSession is closing")
+
+
+def _is_session_unavailable(exc: RuntimeError) -> bool:
+    msg = str(exc)
+    return any(marker in msg for marker in _SESSION_UNAVAILABLE_MARKERS)
+
 
 class SpeechGate:
     """Single source of truth for one persona's speaking state.
 
     With multiple personas in the room, each owns its own gate keyed by
-    ``name`` so log lines stay disambiguated (``[fox]`` vs ``[alien]``).
+    ``name`` so log lines stay disambiguated per persona.
     """
 
     def __init__(
@@ -45,7 +57,7 @@ class SpeechGate:
     # ------------------------------------------------------------------
     @property
     def is_speaking(self) -> bool:
-        """True iff a Fox turn is queued or playing.
+        """True iff this persona's turn is queued or playing.
 
         Backed by `SpeechHandle.done()`, which the framework resolves on
         every terminal case. No flags to get stuck, no race between "set
@@ -85,8 +97,8 @@ class SpeechGate:
              back to False.
 
         `allow_interruptions` defaults to False so podcast audio can't step
-        on Fox mid-sentence. Set True for user-reply turns — the user
-        should be able to cut him off with a fresh hold-to-talk.
+        on the persona mid-sentence. Set True for user-reply turns — the user
+        should be able to cut them off with a fresh hold-to-talk.
 
         Returns ``None`` if the underlying ``AgentSession`` has already
         been closed (user disconnected between "decide to speak" and
@@ -105,11 +117,11 @@ class SpeechGate:
                 allow_interruptions=allow_interruptions,
             )
         except RuntimeError as exc:
-            # The framework raises a bare RuntimeError with this exact
-            # message when the session was closed (e.g. by participant
-            # disconnect) before we got here. Treat it as "nothing to say"
-            # rather than crashing the Director's silence/selection loop.
-            if "AgentSession isn't running" in str(exc):
+            # The framework raises a bare RuntimeError when the session is
+            # not running OR is shutting down (e.g. participant disconnect,
+            # dev-mode hot reload mid-session). Either way: nothing to say —
+            # no-op instead of crashing the Director's silence/selection loop.
+            if _is_session_unavailable(exc):
                 logger.debug("%s speak skipped — session closed", self._name)
                 return None
             raise
@@ -142,7 +154,7 @@ class SpeechGate:
                 allow_interruptions=allow_interruptions,
             )
         except RuntimeError as exc:
-            if "AgentSession isn't running" in str(exc):
+            if _is_session_unavailable(exc):
                 logger.debug("%s say skipped — session closed", self._name)
                 return None
             raise

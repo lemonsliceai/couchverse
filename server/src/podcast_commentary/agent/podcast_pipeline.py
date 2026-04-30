@@ -1,6 +1,6 @@
 """Podcast STT pipeline.
 
-Bundles the collaborators that together make up "Fox's ears":
+Bundles the collaborators that together make up the agent's ears:
 
   * `groq.STT` — non-streaming Whisper called on fixed-interval audio chunks.
     Podcast speech is near-continuous with few natural pauses, so VAD-based
@@ -30,9 +30,9 @@ from podcast_commentary.agent.fox_config import CONFIG
 logger = logging.getLogger("podcast-commentary.podcast_pipeline")
 
 # How often to send accumulated audio to Whisper for transcription.
-# 10 s ≈ 2-3 sentences at typical speaking pace; after two chunks Fox
-# has enough material (~5 sentences) to trigger commentary. Sourced from
-# the active FoxConfig preset.
+# 10 s ≈ 2-3 sentences at typical speaking pace; after two chunks the
+# personas have enough material (~5 sentences) to trigger commentary.
+# Sourced from the active FoxConfig preset.
 CHUNK_INTERVAL_SECONDS = CONFIG.timing.transcript_chunk_s
 
 

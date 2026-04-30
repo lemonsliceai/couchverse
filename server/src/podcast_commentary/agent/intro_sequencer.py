@@ -12,10 +12,12 @@ The next persona blocks on the prior persona reaching a terminal status
 (``DONE`` or ``SKIPPED``) before its own avatar-readiness gate even
 fires, so:
 
-  * Alien joining mid-Fox-intro waits until Fox is DONE before speaking.
-  * Alien joining before Fox waits for Fox to join, intro, and DONE.
-  * Alien joining after Fox is DONE proceeds the moment its own avatar
-    publishes video.
+  * A persona joining mid-prior-intro waits until the prior persona is
+    DONE before speaking.
+  * A persona joining before the prior waits for the prior to join,
+    intro, and DONE.
+  * A persona joining after the prior is DONE proceeds the moment its
+    own avatar publishes video.
 
 Before a persona speaks we wait for *its own* avatar to publish its
 video track — without that, ``DataStreamIO.capture_frame`` blocks on
@@ -128,12 +130,13 @@ class IntroSequencer:
         """Walk personas in declared order, transitioning statuses explicitly.
 
         Edge cases the state machine handles:
-          * Alien's avatar publishes mid-Fox-intro → Alien sits in
-            ``WAITING_FOR_PRIOR`` until Fox hits ``DONE``, *then* enters
-            ``WAITING_FOR_AVATAR`` (instant fast-path) and speaks.
-          * Fox's intro finishes before Alien's avatar joins → Alien
-            transitions to ``WAITING_FOR_AVATAR`` and blocks until the
-            video publish event lands.
+          * The next persona's avatar publishes mid-prior-intro → it
+            sits in ``WAITING_FOR_PRIOR`` until the prior hits ``DONE``,
+            *then* enters ``WAITING_FOR_AVATAR`` (instant fast-path) and
+            speaks.
+          * The prior's intro finishes before the next persona's avatar
+            joins → next transitions to ``WAITING_FOR_AVATAR`` and blocks
+            until the video publish event lands.
           * An avatar never connects at all → the per-persona timeout
             fires, status becomes ``SKIPPED``, and the next persona
             proceeds without waiting on the missing avatar.

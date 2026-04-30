@@ -17,7 +17,8 @@ import pytest
 
 from podcast_commentary.agent.comedian import FoxPhase, PersonaAgent
 from podcast_commentary.agent.director import Director, PersonaContext
-from podcast_commentary.agent.fox_config import load_config
+
+from ._stub_config import make_stub_config
 
 
 @pytest.fixture(autouse=True)
@@ -64,8 +65,7 @@ class _FakeSession:
 
 
 def _make_persona(name: str) -> PersonaAgent:
-    config = load_config(name)
-    return PersonaAgent(config=config)
+    return PersonaAgent(config=make_stub_config(name))
 
 
 def _make_director(*persona_names: str) -> tuple[Director, list[PersonaAgent], list[_FakeRoom]]:
@@ -84,7 +84,7 @@ def test_director_constructs_with_two_persona_contexts():
     materialises every component. Bare assertion to catch any TypeError
     or NameError introduced by the refactor.
     """
-    director, personas, rooms = _make_director("fox", "chaos_agent")
+    director, personas, rooms = _make_director("persona_a", "persona_b")
     assert director._personas == personas
     assert {p.name for p in director._personas} == {personas[0].name, personas[1].name}
     # First-context's room is the user-facing primary; verify the helpers
@@ -105,8 +105,8 @@ def test_room_state_listening_only_when_all_personas_listening():
     phase would let the silence loop fire while the secondary was still
     speaking.
     """
-    director, personas, _rooms = _make_director("fox", "chaos_agent")
-    fox, alien = personas
+    director, personas, _rooms = _make_director("persona_a", "persona_b")
+    primary, secondary = personas
     state = director._room_state
 
     # intros_done is the first gate; flip it on so phase becomes the
@@ -114,22 +114,22 @@ def test_room_state_listening_only_when_all_personas_listening():
     state.mark_intros_done()
     # Both default to LISTENING after PersonaAgent construction — the
     # predicate should already be True.
-    assert fox.phase is FoxPhase.LISTENING
-    assert alien.phase is FoxPhase.LISTENING
+    assert primary.phase is FoxPhase.LISTENING
+    assert secondary.phase is FoxPhase.LISTENING
     assert state.is_listening() is True
 
     # One persona enters COMMENTATING (via a legal transition) — the
     # room is no longer "all listening".
-    fox._set_phase(FoxPhase.COMMENTATING)
+    primary._set_phase(FoxPhase.COMMENTATING)
     assert state.is_listening() is False
 
-    # Bring fox back; alien now drops out — still not "all listening".
-    fox._set_phase(FoxPhase.LISTENING)
-    alien._set_phase(FoxPhase.COMMENTATING)
+    # Bring primary back; secondary now drops out — still not "all listening".
+    primary._set_phase(FoxPhase.LISTENING)
+    secondary._set_phase(FoxPhase.COMMENTATING)
     assert state.is_listening() is False
 
     # Both back to LISTENING — predicate flips back to True.
-    alien._set_phase(FoxPhase.LISTENING)
+    secondary._set_phase(FoxPhase.LISTENING)
     assert state.is_listening() is True
 
 
@@ -139,7 +139,7 @@ def test_room_state_blocks_until_intros_done():
     sentence trigger gate on ``RoomState.is_listening`` and would fire a
     punchline INSTEAD of the first intro otherwise.
     """
-    director, personas, _ = _make_director("fox", "chaos_agent")
+    director, personas, _ = _make_director("persona_a", "persona_b")
     state = director._room_state
     assert all(p.phase is FoxPhase.LISTENING for p in personas)
     assert state.is_listening() is False  # intros_done not yet set
@@ -151,12 +151,12 @@ def test_director_routes_per_persona_room_lookups():
     """Director keeps a per-persona room lookup so dual-room callers
     (intro-readiness, future avatar gates) can resolve the right room.
     """
-    director, personas, rooms = _make_director("fox", "chaos_agent")
-    fox, alien = personas
+    director, personas, rooms = _make_director("persona_a", "persona_b")
+    primary, secondary = personas
 
-    assert director._room_for(fox) is rooms[0]
-    assert director._room_for(alien) is rooms[1]
-    assert director._session_for(fox) is not None
-    assert director._session_for(alien) is not None
+    assert director._room_for(primary) is rooms[0]
+    assert director._room_for(secondary) is rooms[1]
+    assert director._session_for(primary) is not None
+    assert director._session_for(secondary) is not None
     # Different sessions per persona — refactor must not collapse them.
-    assert director._session_for(fox) is not director._session_for(alien)
+    assert director._session_for(primary) is not director._session_for(secondary)

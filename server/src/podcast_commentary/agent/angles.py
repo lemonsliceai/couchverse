@@ -8,8 +8,8 @@ definition from the system prompt. This rotation is the single biggest
 lever for joke variety.
 
 In a multi-persona room each persona has its own angle bank and own
-``angle_lookback`` window — Fox's recent angles never block Alien's pick
-and vice versa.
+``angle_lookback`` window — one persona's recent angles never block
+another's pick.
 """
 
 import random

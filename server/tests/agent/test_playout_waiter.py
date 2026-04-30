@@ -22,7 +22,7 @@ pytestmark = [pytest.mark.asyncio]
 class _FakePersona:
     """Minimal persona stand-in — only ``name`` is read by ``PlayoutWaiter``."""
 
-    def __init__(self, name: str = "fox") -> None:
+    def __init__(self, name: str = "persona") -> None:
         self.name = name
 
 
@@ -58,7 +58,7 @@ def _fallback_count(persona: str) -> float:
 
 async def test_wait_returns_when_handle_resolves() -> None:
     waiter = PlayoutWaiter()
-    persona = _FakePersona("fox-ok")
+    persona = _FakePersona("persona-ok")
     before_ok = _ok_count(persona.name)
     before_timeout = _timeout_count(persona.name)
 
@@ -71,7 +71,7 @@ async def test_wait_returns_when_handle_resolves() -> None:
 
 async def test_wait_records_timeout_when_handle_hangs() -> None:
     waiter = PlayoutWaiter()
-    persona = _FakePersona("fox-timeout")
+    persona = _FakePersona("persona-timeout")
     before_timeout = _timeout_count(persona.name)
     before_ok = _ok_count(persona.name)
 
@@ -87,7 +87,7 @@ async def test_no_fallback_outcome_is_ever_emitted() -> None:
     ``outcome=fallback`` series — only ``ok`` and ``timeout`` are valid
     outcomes."""
     waiter = PlayoutWaiter()
-    persona = _FakePersona("fox-no-fallback")
+    persona = _FakePersona("persona-no-fallback")
     before = _fallback_count(persona.name)
 
     await waiter.wait(persona, _ResolvingHandle(), timeout=1.0, label="commentary")
@@ -120,7 +120,7 @@ async def test_attach_observers_subscribes_when_audio_output_present() -> None:
             self.handlers.setdefault(event, []).append(fn)
 
     class _Persona:
-        name = "fox"
+        name = "persona"
 
         def __init__(self, audio: _Audio) -> None:
             self._audio = audio

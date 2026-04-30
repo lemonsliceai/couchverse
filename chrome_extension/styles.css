@@ -331,7 +331,10 @@ body::before {
   border-radius: var(--radius-sm, 12px);
 }
 
-/* Still preview → live video crossfade. */
+/* Still preview → live video crossfade. While the live track is en
+   route, the preview runs `preview-pulse` — a deliberate fade-in/out
+   (with a touch of scale + desaturation at the dim phase) that reads
+   as "tuning in" rather than ambient breathing. Stops at video-live. */
 .avatar-slot .avatar-preview {
   position: absolute;
   inset: 0;
@@ -339,8 +342,9 @@ body::before {
   height: 100%;
   object-fit: cover;
   z-index: 1;
+  transform-origin: center;
   transition: opacity 0.6s ease-out;
-  animation: preview-breathe 3s ease-in-out infinite;
+  animation: preview-pulse 2.4s ease-in-out infinite;
 }
 
 .avatar-slot.video-live .avatar-preview {
@@ -372,6 +376,56 @@ body::before {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink);
+}
+
+/* "// TUNING IN ..." status chip — paper pill, bottom-left, mirrors the
+   persona-name chip at top-left. Visible while the avatar is loading;
+   fades out once the live video track attaches. */
+.avatar-slot .tuning-chip {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  padding: 4px 10px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  box-shadow: var(--pop-xs);
+  z-index: 10;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fox-deep);
+  opacity: 1;
+  transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+  pointer-events: none;
+}
+
+.avatar-slot .tuning-chip::before {
+  content: "// ";
+  color: var(--ink-faint);
+}
+
+.avatar-slot .tuning-dots {
+  display: inline-block;
+  margin-left: 2px;
+  width: 14px;
+  text-align: left;
+}
+
+.avatar-slot .tuning-dots > span {
+  opacity: 0.2;
+  animation: tuning-dot 1.4s ease-in-out infinite;
+}
+
+.avatar-slot .tuning-dots > span:nth-child(1) { animation-delay: 0s; }
+.avatar-slot .tuning-dots > span:nth-child(2) { animation-delay: 0.18s; }
+.avatar-slot .tuning-dots > span:nth-child(3) { animation-delay: 0.36s; }
+
+.avatar-slot.video-live .tuning-chip {
+  opacity: 0;
+  transform: translateY(4px);
 }
 
 /* Floating reaction particles */
@@ -591,11 +645,36 @@ body::before {
    Animations
    ════════════════════════════════════════════ */
 
-/* Subtle preview breathing — signals "waiting for the avatar"
-   without a spinner. */
+/* Subtle preview breathing — used on the setup-screen cast portraits
+   to signal the avatars are "alive" before the user starts. Soft and
+   ambient, not a loading state. */
 @keyframes preview-breathe {
   0%, 100% { filter: brightness(0.96) saturate(0.95); }
   50%      { filter: brightness(1.04) saturate(1.05); }
+}
+
+/* Tuning-in pulse — the loading state once a session has started but
+   the LemonSlice video track hasn't arrived yet. Stronger than
+   preview-breathe: opacity + scale + desaturation cycle, so the still
+   image reads as "fading in" rather than just present. */
+@keyframes preview-pulse {
+  0%, 100% {
+    opacity: 0.6;
+    filter: brightness(0.92) saturate(0.78);
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    filter: brightness(1.06) saturate(1.05);
+    transform: scale(1.015);
+  }
+}
+
+/* Dot ellipsis on the "// Tuning in" chip — three dots blink in
+   sequence so the chip reads as "in progress" rather than static. */
+@keyframes tuning-dot {
+  0%, 60%, 100% { opacity: 0.2; }
+  30%           { opacity: 1; }
 }
 
 /* Companion frame breathing — a slight pop shadow swell, no glow.
@@ -632,10 +711,13 @@ body::before {
   .cast-portrait,
   .avatar-slot.breathing,
   .avatar-slot .avatar-preview,
+  .avatar-slot .tuning-dots > span,
   .btn-primary.loading,
   .reaction-particle {
     animation: none !important;
   }
+  .avatar-slot .avatar-preview { opacity: 1; transform: none; }
+  .avatar-slot .tuning-dots > span { opacity: 1; }
 }
 
 /* ════════════════════════════════════════════

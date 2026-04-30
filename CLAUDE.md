@@ -1,6 +1,6 @@
 # Couchverse
 
-Two AI hosts (Fox and Alien) deliver live comedic commentary on whatever audio is playing in the user's current browser tab. Think MST3K, except the hecklers live in a Chrome side panel and they'll cover a podcast or a TikTok feed as happily as a movie.
+Two AI hosts (Cat girl and Alien) deliver live comedic commentary on whatever audio is playing in the user's current browser tab. Think MST3K, except the hecklers live in a Chrome side panel and they'll cover a podcast or a TikTok feed as happily as a movie.
 
 ## Stack
 
@@ -48,14 +48,15 @@ See [`chrome_extension/README.md`](chrome_extension/README.md) and [`server/READ
         tab audio ─────►│                  │
    (publish to primary  │                  │
     room only)          ▼                  ▼
-         ┌─────────────────────────┐  ┌─────────────────────────┐
-         │  {session_id}-fox       │  │  {session_id}-alien     │
-         │  role: PRIMARY          │  │  role: SECONDARY        │
-         ├─────────────────────────┤  ├─────────────────────────┤
-         │  podcast-audio  ◄──────  │  │  (no podcast-audio)     │
-         │  AgentSession[fox]      │  │  AgentSession[alien]    │
-         │  lemonslice-avatar-fox  │  │  lemonslice-avatar-alien│
-         └────────────┬────────────┘  └────────────┬────────────┘
+         ┌──────────────────────────┐  ┌──────────────────────────┐
+         │  {session_id}-cat_girl   │  │  {session_id}-alien      │
+         │  role: PRIMARY           │  │  role: SECONDARY         │
+         ├──────────────────────────┤  ├──────────────────────────┤
+         │  podcast-audio  ◄──────   │  │  (no podcast-audio)      │
+         │  AgentSession[cat_girl]  │  │  AgentSession[alien]     │
+         │  lemonslice-avatar-      │  │  lemonslice-avatar-alien │
+         │    cat_girl              │  │                          │
+         └────────────┬─────────────┘  └────────────┬─────────────┘
                       ▲                            ▲
                       │ RoomAgentDispatch          │ self-join with
                       │ (one job per session)      │ server-minted agent JWT
@@ -70,7 +71,7 @@ See [`chrome_extension/README.md`](chrome_extension/README.md) and [`server/READ
 
 Each persona owns exactly one room; each room contains exactly one `AvatarSession`. The `commentary.control` data channel is published into every room (deduped by `event_id`) so each side picks up the union of skip/caption/lifecycle events without double-handling.
 
-Cross-persona awareness is preserved at the **text** layer: every persona's emitted line is broadcast on `commentary.control`, so Fox can call back to Alien's last quip even though Alien's TTS audio is in a different room.
+Cross-persona awareness is preserved at the **text** layer: every persona's emitted line is broadcast on `commentary.control`, so Cat girl can call back to Alien's last quip even though Alien's TTS audio is in a different room.
 
 ## Key architecture decisions
 

@@ -387,7 +387,7 @@ async def test_dual_room_end_to_end(
         body = resp.json()
 
     rooms = {r["persona"]: r for r in body["rooms"]}
-    assert {"fox", "chaos_agent"} <= set(rooms), f"expected both personas, got {list(rooms)}"
+    assert len(rooms) >= 2, f"expected at least two personas, got {list(rooms)}"
 
     primary = next(r for r in body["rooms"] if r["role"] == "primary")
     secondary = next(r for r in body["rooms"] if r["role"] == "secondary")
@@ -451,14 +451,14 @@ async def test_dual_room_end_to_end(
     by_persona = await listener
     await publisher
 
-    fox_lines = by_persona.get(primary["persona"], [])
-    alien_lines = by_persona.get(secondary["persona"], [])
+    primary_lines = by_persona.get(primary["persona"], [])
+    secondary_lines = by_persona.get(secondary["persona"], [])
 
-    assert fox_lines, (
+    assert primary_lines, (
         f"AC3 violated: persona={primary['persona']!r} produced no commentary "
         f"in {_PODCAST_DURATION_S + _COMMENTARY_DEADLINE_AFTER_AUDIO_S:.0f}s"
     )
-    assert alien_lines, (
+    assert secondary_lines, (
         f"AC3 violated: persona={secondary['persona']!r} produced no commentary "
         f"in {_PODCAST_DURATION_S + _COMMENTARY_DEADLINE_AFTER_AUDIO_S:.0f}s"
     )
@@ -467,9 +467,9 @@ async def test_dual_room_end_to_end(
     # A's last line. ``references_co_speaker`` filters stop-words and
     # short tokens, matching the production heuristic for cross-persona metrics.
     later_speaker, earlier_lines = (
-        (alien_lines[-1], fox_lines[-3:])
-        if len(alien_lines) >= 1 and len(fox_lines) >= 1
-        else (fox_lines[-1], alien_lines[-3:])
+        (secondary_lines[-1], primary_lines[-3:])
+        if len(secondary_lines) >= 1 and len(primary_lines) >= 1
+        else (primary_lines[-1], secondary_lines[-3:])
     )
     assert references_co_speaker(later_speaker, earlier_lines), (
         f"AC4 violated: later turn {later_speaker!r} shares no significant token "

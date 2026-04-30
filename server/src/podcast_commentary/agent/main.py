@@ -238,9 +238,9 @@ def _avatar_identity_for(persona_name: str) -> str:
 
 
 # Track-name prefix the extension uses to peel a persona off a direct-publish
-# audio track. Each audio-only persona publishes under
-# ``persona-<name>`` (e.g. ``persona-fox``) so the side-panel can route both
-# tracks separately even though they share one ``local_participant``.
+# audio track. Each audio-only persona publishes under ``persona-<name>``
+# so the side-panel can route every persona's track separately even though
+# they share one ``local_participant``.
 _PERSONA_TRACK_PREFIX = "persona-"
 
 

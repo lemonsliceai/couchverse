@@ -69,13 +69,13 @@ async def test_publish_stamps_event_id_uuid4():
     room = _FakeRoom("primary")
     channel = ControlChannel(room)
 
-    await channel.publish_commentary_start("fox")
+    await channel.publish_commentary_start("persona_a")
 
     payloads = _decode_payloads(room)
     assert len(payloads) == 1
     payload = payloads[0]
     assert payload["type"] == "commentary_start"
-    assert payload["speaker"] == "fox"
+    assert payload["speaker"] == "persona_a"
     # UUIDv4 — must parse and report version 4.
     parsed = uuid.UUID(payload["event_id"])
     assert parsed.version == 4
@@ -85,9 +85,9 @@ async def test_publish_stamps_event_id_uuid4():
 @pytest.mark.parametrize(
     ("publish_call", "expected_type"),
     [
-        (lambda c: c.publish_commentary_start("fox"), "commentary_start"),
-        (lambda c: c.publish_commentary_end("fox"), "commentary_end"),
-        (lambda c: c.publish_agent_ready([{"name": "fox", "label": "Fox"}]), "agent_ready"),
+        (lambda c: c.publish_commentary_start("persona_a"), "commentary_start"),
+        (lambda c: c.publish_commentary_end("persona_a"), "commentary_end"),
+        (lambda c: c.publish_agent_ready([{"name": "persona_a", "label": "Persona A"}]), "agent_ready"),
     ],
 )
 async def test_every_event_type_carries_event_id(publish_call, expected_type):
@@ -119,7 +119,7 @@ async def test_publish_fans_out_across_all_rooms_with_same_event_id():
     channel.add_secondary_room(secondary_a)
     channel.add_secondary_room(secondary_b)
 
-    await channel.publish_commentary_start("alien")
+    await channel.publish_commentary_start("persona_a")
 
     primary_payloads = _decode_payloads(primary)
     secondary_a_payloads = _decode_payloads(secondary_a)
@@ -150,8 +150,8 @@ async def test_separate_publishes_get_distinct_event_ids():
     room = _FakeRoom("primary")
     channel = ControlChannel(room)
 
-    await channel.publish_commentary_start("fox")
-    await channel.publish_commentary_end("fox")
+    await channel.publish_commentary_start("persona_a")
+    await channel.publish_commentary_end("persona_a")
 
     payloads = _decode_payloads(room)
     assert payloads[0]["event_id"] != payloads[1]["event_id"]
@@ -167,7 +167,7 @@ async def test_publish_continues_when_one_room_fails(caplog):
     channel.add_secondary_room(secondary)
 
     with caplog.at_level(logging.WARNING, logger="podcast-commentary.control"):
-        await channel.publish_commentary_start("fox")
+        await channel.publish_commentary_start("persona_a")
 
     # Secondary still got the event despite the primary's failure.
     secondary_payloads = _decode_payloads(secondary)
@@ -186,7 +186,7 @@ async def test_publish_logs_warning_when_secondary_fails(caplog):
     channel.add_secondary_room(secondary)
 
     with caplog.at_level(logging.WARNING, logger="podcast-commentary.control"):
-        await channel.publish_commentary_end("alien")
+        await channel.publish_commentary_end("persona_a")
 
     assert len(_decode_payloads(primary)) == 1
     assert any("Failed to publish" in rec.message for rec in caplog.records)

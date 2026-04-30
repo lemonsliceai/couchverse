@@ -1,4 +1,4 @@
-"""Transcript state and commentary timing for Fox.
+"""Transcript state and commentary timing.
 
 Tracks the podcast transcript and records when commentary fires so we
 can enforce a minimum gap and burst cooldown.
@@ -22,7 +22,7 @@ BURST_MAX = CONFIG.timing.max_jokes_per_burst
 BURST_COOLDOWN = CONFIG.timing.burst_cooldown_s
 
 # Number of sentence-ending punctuation marks (from Whisper output) that
-# must accumulate before Fox triggers commentary. ~5 sentences ≈ 25-35s
+# must accumulate before commentary triggers. ~5 sentences ≈ 25-35s
 # of podcast speech at typical speaking pace.
 SENTENCE_THRESHOLD = CONFIG.timing.sentences_before_joke
 
@@ -48,15 +48,15 @@ class CommentaryTimer:
     """Tracks commentary timing and enforces rules.
 
     Two timestamps matter:
-      * `_last_speech_end_time` — when Fox most recently *finished*
+      * `_last_speech_end_time` — when a persona most recently *finished*
         playing audio (driven by `AudioOutput.playback_finished`, the
         authoritative "avatar stopped talking" signal). ``MIN_GAP`` counts
         from here.
       * ``_speech_start_times`` — when each speaking turn began
         (``playback_started``). Used for the burst window / cooldown.
 
-    The timer never consults "is Fox currently speaking?" — that gate
-    lives in ``ComedianAgent.is_speaking`` (authoritative, SpeechHandle-
+    The timer never consults "is a persona currently speaking?" — that
+    gate lives in ``SpeechGate.is_speaking`` (authoritative, SpeechHandle-
     backed). The timer only enforces *post-speech* pacing rules.
 
     Failed commentary generations (LLM produced nothing, or the turn was
@@ -126,15 +126,15 @@ class CommentaryTimer:
 
 
 class FullTranscript:
-    """Accumulates the podcast transcript and exposes what Fox should react to.
+    """Accumulates the podcast transcript and exposes what personas should react to.
 
-    After each commentary, the read cursor advances so Fox only sees
-    transcript that arrived since his last comment.
+    After each commentary, the read cursor advances so personas only see
+    transcript that arrived since the last comment.
     """
 
     def __init__(self):
         self._parts: list[tuple[float, str]] = []  # (timestamp, text)
-        # Cursor: index of the first part Fox hasn't reacted to yet.
+        # Cursor: index of the first part personas haven't reacted to yet.
         # Advanced by reset_sentence_count() when commentary fires.
         self._cursor: int = 0
         self._sentence_count_since_reset: int = 0
@@ -164,7 +164,7 @@ class FullTranscript:
         self._cursor = len(self._parts)
 
     def recent_transcript(self) -> str:
-        """Transcript since Fox's last comment — what he's reacting to."""
+        """Transcript since the last comment — what the persona is reacting to."""
         if not self._parts:
             return ""
         return " ".join(txt for _, txt in self._parts[self._cursor :])

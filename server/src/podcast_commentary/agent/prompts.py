@@ -7,8 +7,8 @@ Per-turn context (transcript, history, angle) is assembled by
 
 All prompt text is sourced from each persona's FoxConfig — see
 ``fox_config.py`` and ``fox_configs/<persona>.py``. The functions below
-accept the config explicitly so the same builder works for Fox and Alien
-in the same process.
+accept the config explicitly so the same builder works for every active
+persona in the same process.
 """
 
 from podcast_commentary.agent.angles import pick_angle

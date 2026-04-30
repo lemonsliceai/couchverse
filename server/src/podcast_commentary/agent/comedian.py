@@ -1,4 +1,4 @@
-"""PersonaAgent — one comedian instance (Fox or Alien).
+"""PersonaAgent — one comedian instance, one per persona preset.
 
 A ``PersonaAgent`` owns only what is *intrinsically per-persona*:
 
@@ -299,7 +299,7 @@ _VALID_TRANSITIONS: dict[FoxPhase, set[FoxPhase]] = {
 
 
 class PersonaAgent(Agent):
-    """One comedian — Fox or Alien — bound to one ``AgentSession``."""
+    """One comedian — bound to one ``AgentSession``."""
 
     def __init__(
         self,
@@ -484,7 +484,7 @@ class PersonaAgent(Agent):
         """Compose the SpeechGate and signal readiness — but do NOT speak.
 
         The Director owns intros so we can sequence them across personas
-        instead of having Fox and Alien talk over each other in second 1.
+        instead of having multiple personas talk over each other in second 1.
         """
         self._gate = SpeechGate(
             self.session,
@@ -501,16 +501,24 @@ class PersonaAgent(Agent):
     def speak_intro(self) -> Any:
         """Deliver this persona's intro line. Director calls at most once.
 
-        Speaks a static, pre-authored line via ``session.say`` rather than
-        going through the LLM. Intros are the most load-bearing beat of the
-        show (first impression, sequenced across personas) and must be
-        reliable — static audio is short and predictable, which keeps it
-        well inside the playout-timeout window that triggers our LemonSlice
-        multi-avatar RPC fallback. Returns the SpeechHandle so the Director
-        can ``wait_for_playout`` with its own timeout safety net.
+        Speaks a pre-authored line via ``session.say`` rather than going
+        through the LLM. Intros are the most load-bearing beat of the show
+        (first impression, sequenced across personas) and must be reliable
+        — static audio is short and predictable, which keeps it well inside
+        the playout-timeout window that triggers our LemonSlice multi-avatar
+        RPC fallback. Returns the SpeechHandle so the Director can
+        ``wait_for_playout`` with its own timeout safety net.
+
+        The persona ships a pool of pre-authored variants
+        (``persona.intro_lines``); we pick one uniformly at random per
+        session so the same opener doesn't land every time. This is the
+        standard fix for "the bot always greets me the same way" — random
+        selection from a hand-authored pool keeps the voice tight without
+        adding LLM latency or risk of off-brand output.
         """
         self._set_phase(FoxPhase.INTRO)
-        return self.gate.say(text=self._config.persona.intro_line)
+        line = random.choice(self._config.persona.intro_lines)
+        return self.gate.say(text=line)
 
     async def deliver_commentary(
         self,

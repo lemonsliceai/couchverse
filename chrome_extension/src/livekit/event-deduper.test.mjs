@@ -25,7 +25,7 @@ test("two controllers, same event published twice, downstream handler called onc
   const controllerA = (msg) => onDataReceived(msg);
   const controllerB = (msg) => onDataReceived(msg);
 
-  const event = { type: "commentary_start", event_id: "uuid-abc", speaker: "fox" };
+  const event = { type: "commentary_start", event_id: "uuid-abc", speaker: "alien" };
   // The agent fans the same event out to both rooms; the extension
   // subscribes on each. Order between the two arrivals does not
   // matter — first one through wins.

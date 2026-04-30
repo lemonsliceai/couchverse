@@ -28,10 +28,14 @@ from podcast_commentary.api import livekit_tokens
 from podcast_commentary.api.routes import sessions as sessions_module
 from podcast_commentary.core import config as core_config
 
+from tests.agent._stub_config import make_stub_config
 
-PRIMARY_PERSONA = "fox"
-SECONDARY_PERSONA = "chaos_agent"
-PERSONA_NAMES = [PRIMARY_PERSONA, SECONDARY_PERSONA]
+
+# First entry is primary (route uses PERSONAS ordering as the source
+# of truth — no separate PRIMARY_PERSONA setting).
+PERSONA_NAMES = ["persona_a", "persona_b"]
+PRIMARY_PERSONA = PERSONA_NAMES[0]
+SECONDARY_PERSONA = PERSONA_NAMES[1]
 
 
 def _install_test_settings(monkeypatch) -> None:
@@ -41,7 +45,6 @@ def _install_test_settings(monkeypatch) -> None:
     monkeypatch.setattr(core_config.settings, "LIVEKIT_URL", "wss://test.livekit.cloud")
     monkeypatch.setattr(core_config.settings, "AGENT_NAME", "test-agent")
     monkeypatch.setattr(core_config.settings, "PERSONAS", ",".join(PERSONA_NAMES))
-    monkeypatch.setattr(core_config.settings, "PRIMARY_PERSONA", PRIMARY_PERSONA)
     # Token-minting helper reads through its own ``settings`` reference.
     monkeypatch.setattr(livekit_tokens.settings, "LIVEKIT_API_KEY", "test-api-key")
     monkeypatch.setattr(livekit_tokens.settings, "LIVEKIT_API_SECRET", "test-api-secret")
@@ -75,6 +78,12 @@ def client(monkeypatch):
         return session_id or "stub-session-id"
 
     monkeypatch.setattr(sessions_module, "create_session", _fake_create_session)
+
+    # Route loads each persona's FoxConfig to populate the dispatch metadata
+    # (label, avatar_url). Stub the loader so the test never touches the
+    # real preset bank — keeps it character-agnostic and decoupled from
+    # whichever presets happen to ship today.
+    monkeypatch.setattr(sessions_module, "load_config", make_stub_config)
 
     app = FastAPI()
     app.include_router(sessions_module.router)

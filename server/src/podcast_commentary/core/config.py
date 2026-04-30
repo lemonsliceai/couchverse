@@ -43,15 +43,15 @@ class Settings(BaseSettings):
 
     # Comma-separated list of FoxConfig presets to load. Each preset becomes
     # one on-screen persona; the Director picks who speaks each turn. The
-    # first persona's timing values drive shared cadence. Defaults to Fox +
-    # Alien for the dual-avatar experience.
-    PERSONAS: str = "fox,chaos_agent"
-
-    # Which persona's room receives the LiveKit `RoomAgentDispatch` (the
-    # "primary" room). The agent worker is dispatched into this room only;
-    # all other personas live in secondary rooms that the agent self-joins
-    # via dispatch metadata. Must be one of the names listed in PERSONAS.
-    PRIMARY_PERSONA: str = "fox"
+    # **first entry is the primary** — its room receives the LiveKit
+    # ``RoomAgentDispatch`` (the agent worker is dispatched there and
+    # self-joins the rest as secondaries) and its timing values drive
+    # shared cadence. Reorder this list to change the primary.
+    #
+    # When empty, every preset module in ``fox_configs/`` is
+    # auto-discovered (sorted) and the alphabetically-first becomes
+    # primary — set this explicitly to control order or trim the lineup.
+    PERSONAS: str = ""
 
     # Speaker-selection LLM (Director judge). Cheap + fast wins here — we
     # only need a JSON pick, not creative writing. Same Groq model as the
