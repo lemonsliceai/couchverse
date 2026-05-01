@@ -33,7 +33,9 @@ def create_app() -> FastAPI:
 
     app.include_router(sessions.router)
 
-    # Serve fox_2x3.jpg and other static files
+    # Serve persona avatar images to LemonSlice Cloud via AVATAR_BASE_URL.
+    # fox_2x3.jpg is retained until the in-review Chrome Web Store build
+    # (which still references the Fox persona) is approved or superseded.
     static_dir = Path(__file__).parent.parent / "core" / "data"
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 

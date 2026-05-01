@@ -69,16 +69,13 @@ The Chrome extension is the only frontend. It captures the active tab's audio vi
 > [!NOTE]
 > You'll need API keys for [LiveKit Cloud](https://cloud.livekit.io/), [Groq](https://console.groq.com/), [ElevenLabs](https://elevenlabs.io/), and [LemonSlice](https://www.lemonslice.com/). [Neon](https://neon.tech/) is optional — without `DATABASE_URL`, the app runs without persistence.
 
-> [!NOTE]
-> The GitHub repo is `lemonsliceai/watch-with-fox` for historical reasons — the project was renamed to Couchverse. Same code, same product.
-
 > [!IMPORTANT]
 > `AVATAR_BASE_URL` must be reachable from LemonSlice Cloud's servers — `localhost` won't work. Either deploy the server, host the avatars on a public CDN/bucket, or expose your local server with `ngrok http 8080`.
 
 ```bash
 # 1. Clone
-git clone https://github.com/lemonsliceai/watch-with-fox.git
-cd watch-with-fox
+git clone https://github.com/lemonsliceai/couchverse.git
+cd couchverse
 
 # 2. Install and configure the server
 cd server
@@ -145,7 +142,7 @@ Both are driven by the same `FoxConfig` schema in `server/src/podcast_commentary
 
 ## Community
 
-- **Bugs & feature requests** — [open an issue](https://github.com/lemonsliceai/watch-with-fox/issues)
+- **Bugs & feature requests** — [open an issue](https://github.com/lemonsliceai/couchverse/issues)
 - **Contributing** — read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR
 - **Code of conduct** — [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 - **Security** — disclose privately per [SECURITY.md](SECURITY.md)

@@ -64,7 +64,7 @@ For deeper docs, see [`server/README.md`](server/README.md) and [`chrome_extensi
 
 ## Reporting bugs
 
-Open a [GitHub issue](https://github.com/lemonsliceai/watch-with-fox/issues) with:
+Open a [GitHub issue](https://github.com/lemonsliceai/couchverse/issues) with:
 
 - Steps to reproduce
 - Expected vs. actual behavior
