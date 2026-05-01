@@ -66,6 +66,8 @@ CONFIG = FoxConfig(
         angle_lookback=1,
         commentary_cta=COMMENTARY_CTA,
         speaker_label="Cat girl",
+        descriptor="Emo deadpan",
+        preview_filename="cat_girl_2x3.png",
     ),
     timing=TimingConfig(
         min_silence_between_jokes_s=10.0,

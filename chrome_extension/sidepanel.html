@@ -14,18 +14,13 @@
          Mirrors the session screen: stacked 2:3 portraits in the middle,
          controls panel at the bottom. The portraits visually "become" the
          live avatars once connected, so setup → session reads as the same
-         space animating to life. -->
+         space animating to life.
+
+         #cast-stack is filled at runtime from GET /api/personas — the
+         server's PERSONAS lineup is the single source of truth, so
+         changing personas is one env edit, not coupled HTML changes. -->
     <div id="setup-screen">
-      <div id="cast-stack">
-        <div class="cast-portrait">
-          <img src="icons/david_sacks_2x3.png" alt="David Sacks" />
-          <div class="cast-badge-wrap"><span>David Sacks - Rain Man</span></div>
-        </div>
-        <div class="cast-portrait">
-          <img src="icons/cat_girl_2x3.png" alt="Cat girl" />
-          <div class="cast-badge-wrap"><span>Cat girl - Emo deadpan</span></div>
-        </div>
-      </div>
+      <div id="cast-stack"></div>
 
       <div id="setup-controls">
         <button id="start-btn" class="btn-primary" disabled>
@@ -41,40 +36,13 @@
     <!-- Session screen (shown after connection) -->
     <div id="session-screen" class="hidden">
 
-      <!-- Two stacked avatar slots — populated dynamically when each
-           lemonslice-avatar-<name> participant connects. The data-name
-           attribute is the persona name; sidepanel.js routes tracks +
-           speaker-state by matching it.
-
-           Each slot shows a still preview (icons/*_2x3.jpg) until the
-           LiveKit video track attaches, at which point the live avatar
-           fades in over the preview. Keeps the panel visually populated
-           during the ~1-2s avatar boot instead of showing dead space. -->
-      <div id="avatars-stack">
-        <div class="avatar-slot has-preview" data-name="david_sacks" data-label="David Sacks - Rain Man">
-          <img class="avatar-preview" src="icons/david_sacks_2x3.png" alt="David Sacks" />
-          <div class="avatar-video"></div>
-          <div class="avatar-badge">
-            <span>David Sacks - Rain Man</span>
-          </div>
-          <div class="tuning-chip" aria-live="polite">
-            <span>Tuning in</span><span class="tuning-dots"><span>.</span><span>.</span><span>.</span></span>
-          </div>
-          <div class="reactions"></div>
-        </div>
-
-        <div class="avatar-slot has-preview" data-name="cat_girl" data-label="Cat girl - Emo deadpan">
-          <img class="avatar-preview" src="icons/cat_girl_2x3.png" alt="Cat girl" />
-          <div class="avatar-video"></div>
-          <div class="avatar-badge">
-            <span>Cat girl - Emo deadpan</span>
-          </div>
-          <div class="tuning-chip" aria-live="polite">
-            <span>Tuning in</span><span class="tuning-dots"><span>.</span><span>.</span><span>.</span></span>
-          </div>
-          <div class="reactions"></div>
-        </div>
-      </div>
+      <!-- Avatar slots — filled at session start from the authoritative
+           personas[] in the POST /api/sessions response. Each slot's
+           data-name is the persona name; sidepanel.js routes tracks +
+           speaker-state by matching it. Each shows a still preview
+           (icons/<preview_filename>) until the LiveKit video track
+           attaches, then the live avatar fades in over the preview. -->
+      <div id="avatars-stack"></div>
 
       <!-- Controls — Game HUD Panel.
            Pacing dials live in a collapsed disclosure so they don't eat

@@ -59,6 +59,14 @@ class PersonaConfig:
     # speaker-selection LLM. Falls back to the config's ``name`` field
     # when empty.
     speaker_label: str = ""
+    # Short tagline shown next to the label in the extension UI
+    # (e.g. "Emo deadpan", "Rain Man"). Empty hides the tagline.
+    descriptor: str = ""
+    # Filename of the still preview shipped inside the extension at
+    # ``chrome_extension/icons/<file>``. The server names it; the client
+    # always resolves it under ``icons/``. Empty falls back to
+    # ``<name>_2x3.png`` at the renderer.
+    preview_filename: str = ""
 
 
 @dataclass(frozen=True)

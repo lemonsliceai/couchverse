@@ -25,6 +25,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from podcast_commentary.api import livekit_tokens
+from podcast_commentary.api.routes import personas as personas_module
 from podcast_commentary.api.routes import sessions as sessions_module
 from podcast_commentary.core import config as core_config
 
@@ -84,6 +85,11 @@ def client(monkeypatch):
     # real preset bank — keeps it character-agnostic and decoupled from
     # whichever presets happen to ship today.
     monkeypatch.setattr(sessions_module, "load_config", make_stub_config)
+    # build_persona_manifest (called by the sessions route via the
+    # imported helper) resolves persona names through its own module's
+    # ``load_config`` reference — stub that too so the test stays
+    # hermetic against the real preset bank.
+    monkeypatch.setattr(personas_module, "load_config", make_stub_config)
 
     app = FastAPI()
     app.include_router(sessions_module.router)
@@ -116,12 +122,30 @@ def test_response_shape_matches_spec(client):
     # Top-level keys are exactly the public contract — no more, no less.
     # Locking the set protects extension consumers from silent additions
     # they don't know how to ignore.
-    assert set(body.keys()) == {"session_id", "livekit_url", "video_url", "rooms"}
+    assert set(body.keys()) == {
+        "session_id",
+        "livekit_url",
+        "video_url",
+        "rooms",
+        "personas",
+    }
     assert isinstance(body["session_id"], str) and body["session_id"]
     assert body["livekit_url"] == "wss://test.livekit.cloud"
     assert body["video_url"] == "https://example.com/video"
     assert isinstance(body["rooms"], list)
     assert len(body["rooms"]) == len(PERSONA_NAMES)
+
+    # Persona manifest mirrors PERSONAS order — the extension's avatar
+    # stack renders directly from this, so order + role are part of the
+    # public contract.
+    assert isinstance(body["personas"], list)
+    assert [p["name"] for p in body["personas"]] == PERSONA_NAMES
+    expected_persona_keys = {"name", "label", "descriptor", "preview_filename", "role"}
+    for entry in body["personas"]:
+        assert set(entry.keys()) == expected_persona_keys
+    assert body["personas"][0]["role"] == "primary"
+    for entry in body["personas"][1:]:
+        assert entry["role"] == "secondary"
 
     # Each RoomEntry is a flat record of (persona, room_name, token, role).
     expected_entry_keys = {"persona", "room_name", "token", "role"}

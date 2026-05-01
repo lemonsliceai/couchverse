@@ -14,7 +14,10 @@
 import { API_URL, SessionState } from "./config.js";
 import { detectActiveMedia, registerTabMessageListener } from "./messaging/tab-bridge.js";
 import { SessionLifecycle } from "./session.js";
+import { fetchPersonasApi, friendlyApiError } from "./transport/api.js";
+import { showError } from "./ui/avatar-slots.js";
 import { initPacingControls } from "./ui/pacing-controls.js";
+import { renderSetupSlots } from "./ui/persona-renderer.js";
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -24,6 +27,18 @@ document.addEventListener("DOMContentLoaded", () => {
   // build time and there is no runtime override.
   console.log("[ext] API_URL:", API_URL);
   const session = new SessionLifecycle();
+
+  // ── Persona lineup (server is source of truth) ──
+  // The setup-screen cast is whatever PERSONAS resolves to server-side.
+  // The session-screen avatar slots come from the same manifest embedded
+  // in the POST /api/sessions response, so the live stack stays
+  // authoritative even if the setup fetch failed or was stale.
+  fetchPersonasApi()
+    .then(({ personas }) => renderSetupSlots(personas))
+    .catch((err) => {
+      console.error("[ext] persona manifest fetch failed:", err);
+      showError(friendlyApiError(err));
+    });
 
   // ── Initial active-tab detection ──
   detectActiveMedia({

@@ -13,6 +13,10 @@ from podcast_commentary.api.livekit_dispatch import (
     SecondaryRoomDispatch,
 )
 from podcast_commentary.api.livekit_tokens import mint_agent_token
+from podcast_commentary.api.routes.personas import (
+    PersonaManifestEntry,
+    build_persona_manifest,
+)
 from podcast_commentary.core.config import settings
 from podcast_commentary.core.db import (
     create_session,
@@ -49,6 +53,10 @@ class CreateSessionResponse(BaseModel):
     livekit_url: str
     video_url: str
     rooms: list[RoomEntry]
+    # Authoritative persona lineup for THIS session — same shape as
+    # ``GET /api/personas``. The extension re-renders avatar slots from
+    # this so the stack always matches what the server actually minted.
+    personas: list[PersonaManifestEntry]
 
 
 def _persona_room_name(session_id: str, persona: str) -> str:
@@ -174,6 +182,7 @@ async def create_session_route(request: CreateSessionRequest):
         livekit_url=settings.LIVEKIT_URL,
         video_url=request.video_url,
         rooms=rooms,
+        personas=build_persona_manifest(),
     )
 
 

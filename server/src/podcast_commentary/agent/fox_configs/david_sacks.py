@@ -133,6 +133,8 @@ CONFIG = FoxConfig(
         angle_lookback=1,
         commentary_cta=COMMENTARY_CTA,
         speaker_label="David Sacks",
+        descriptor="Rain Man",
+        preview_filename="david_sacks_2x3.png",
     ),
     timing=TimingConfig(
         # Sacks talks LESS than the other two — he should land like a closing

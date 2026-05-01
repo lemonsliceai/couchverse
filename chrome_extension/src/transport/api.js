@@ -24,6 +24,22 @@ export async function createSessionApi(videoUrl, videoTitle) {
   return res.json();
 }
 
+// Persona manifest — server is the single source of truth for which
+// personas the extension renders. Called once on panel open to populate
+// the setup screen; the per-session lineup also rides on the sessions
+// response (used to render the live avatar stack), so this is purely
+// for the pre-session preview.
+export async function fetchPersonasApi() {
+  const res = await fetch(`${API_URL}/api/personas`);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => res.statusText);
+    const err = new Error(`Persona manifest failed [${res.status}]: ${detail}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
 // Translate raw fetch / API errors into something safe to display in the
 // setup UI. The full error is still logged via console for debugging.
 export function friendlyApiError(err) {

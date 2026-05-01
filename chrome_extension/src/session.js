@@ -30,6 +30,7 @@ import {
   spawnReaction,
 } from "./ui/avatar-slots.js";
 import { getPacing } from "./ui/pacing-controls.js";
+import { renderAvatarSlots } from "./ui/persona-renderer.js";
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -75,10 +76,15 @@ function parseSession(payload) {
     throw new Error(`Expected exactly one primary room, got ${primaryCount}`);
   }
 
+  if (!Array.isArray(payload.personas) || payload.personas.length === 0) {
+    throw new Error("Session response missing personas[]");
+  }
+
   return {
     sessionId: payload.session_id,
     livekitUrl: payload.livekit_url,
     rooms,
+    personas: payload.personas,
   };
 }
 
@@ -200,6 +206,11 @@ export class SessionLifecycle {
           this._primaryPersona = persona;
         }
       }
+
+      // Render avatar slots from the per-session manifest BEFORE showing
+      // the session screen — `slotFor` lookups in track-subscribed rely
+      // on the slots existing the moment a track lands.
+      renderAvatarSlots(this._session.personas);
 
       $("#setup-screen").classList.add("hidden");
       $("#session-screen").classList.remove("hidden");
