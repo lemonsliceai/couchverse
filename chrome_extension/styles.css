@@ -96,25 +96,46 @@ body::before {
   min-height: 0;
 }
 
+/* Cast lineup — auto-fits N portraits inside the side panel. The
+   per-N `--slot-min` (set in JS) decides column count (1 col for N≤3,
+   2 for N=4, 3 for N=5-9, 4 for N≥10); `--rows` (also set in JS) lets
+   each tile cap to its share of the container height. Rows shrink to
+   tile height (`grid-auto-rows: auto`) and the whole grid block sits
+   centered (`align-content: center`) — so leftover vertical space
+   splits symmetrically above and below the cast instead of dumping
+   below it. Mirrors the session-screen `#avatars-stack` rules so the
+   layout doesn't jump when the session starts. */
 #cast-stack {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--slot-min, 100%), 1fr));
+  grid-auto-rows: auto;
   gap: 14px;
   flex: 1;
   min-height: 0;
+  align-content: center;
+  justify-items: center;
+  container-type: size;
 }
 
 /* Cast portrait — paper card with ink border + pop shadow. The two
    portraits get opposing tilts so the stack reads like stickers on
-   a notebook, matching the marketing site's CrewCard rhythm. */
+   a notebook, matching the marketing site's CrewCard rhythm.
+
+   Sizing: tiles grow until either column width OR row height stops
+   them. `--slot-h` is each tile's share of the container height
+   (accounting for inter-row gaps); width derives from height × 2/3
+   and is then capped by the column. This way the cast block fills
+   whichever dimension is the binding constraint without overflowing
+   the other. */
 .cast-portrait {
   position: relative;
-  flex: 1 1 0;
   min-height: 0;
+  --gap: 14px;
+  --slot-h: calc((100cqh - (var(--rows, 1) - 1) * var(--gap)) / var(--rows, 1));
   aspect-ratio: 2 / 3;
-  width: auto;
-  max-width: 100%;
+  width: min(100%, calc(var(--slot-h) * 2 / 3));
+  height: auto;
+  max-height: var(--slot-h);
   background: var(--paper);
   border: 3px solid var(--ink);
   border-radius: var(--radius);
@@ -268,24 +289,44 @@ body::before {
   min-height: 0;
 }
 
-/* Two stacked avatar slots — same sizing rules as #cast-stack so
-   setup → live reads as the same space animating. */
+/* Avatar grid — auto-fits N portraits inside the side panel. The
+   per-N `--slot-min` (set in JS) decides column count (1 col for N≤3,
+   2 for N=4, 3 for N=5-9, 4 for N≥10); `--rows` (also from JS) lets
+   each tile cap to its share of the container height. Rows shrink to
+   tile height (`grid-auto-rows: auto`) and the whole grid block sits
+   centered (`align-content: center`) — leftover vertical space splits
+   above/below the cast instead of dumping below it, so the lineup
+   stays balanced as the PACING strip and other controls eat into the
+   avatars area. */
 #avatars-stack {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--slot-min, 140px), 1fr));
+  grid-auto-rows: auto;
+  gap: 10px;
   flex: 1;
   min-height: 0;
+  align-content: center;
+  justify-items: center;
+  /* Container queries let slot sizing measure against the *actual*
+     panel area (cqh below) regardless of where #avatars-stack sits in
+     the side-panel layout. */
+  container-type: size;
 }
 
+/* Sizing: tiles grow until either column width OR row height stops
+   them. `--slot-h` is each tile's share of the container height
+   (accounting for inter-row gaps); width derives from height × 2/3
+   and is then capped by the column. The cast then fills whichever
+   dimension is the binding constraint without overflowing the other. */
 .avatar-slot {
   position: relative;
-  flex: 1 1 0;
   min-height: 0;
+  --gap: 10px;
+  --slot-h: calc((100cqh - (var(--rows, 1) - 1) * var(--gap)) / var(--rows, 1));
   aspect-ratio: 2 / 3;
-  width: auto;
-  max-width: 100%;
+  width: min(100%, calc(var(--slot-h) * 2 / 3));
+  height: auto;
+  max-height: var(--slot-h);
   background: var(--paper);
   border: 3px solid var(--ink);
   border-radius: var(--radius);
@@ -303,11 +344,16 @@ body::before {
   animation: companion-breathe 3.5s ease-in-out infinite;
 }
 
-/* Speaking — swap the ink shadow for a fox-orange one. Reads as
-   the comedian's spotlight without changing the slot's geometry. */
+/* Speaking — swap the ink shadow for a per-persona accent outline.
+   Reads as the comedian's spotlight without changing the slot's
+   geometry. The accent vars are set per-slot from the persona
+   manifest (see persona-renderer.js); fall back to the legacy fox
+   palette if the slot didn't get its own color. */
 .avatar-slot.speaking {
   transform: rotate(0deg) translate(-1px, -1px);
-  box-shadow: 6px 6px 0 0 var(--fox);
+  outline: 3px solid var(--slot-accent, var(--fox));
+  outline-offset: 2px;
+  box-shadow: 0 0 0 1px var(--slot-accent-deep, var(--fox-deep));
   animation: none;
 }
 

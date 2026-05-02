@@ -49,6 +49,7 @@ from podcast_commentary.agent.playout_waiter import PlayoutWaiter
 from podcast_commentary.agent.podcast_pipeline import PodcastPipeline
 from podcast_commentary.agent.room_state import RoomState
 from podcast_commentary.agent.secondary_room import SecondaryRoomConnector
+from podcast_commentary.agent.selection_mode_controller import SelectionModeController
 from podcast_commentary.agent.selector import SpeakerSelector
 from podcast_commentary.agent.settings_controller import SettingsController
 from podcast_commentary.agent.skip_coordinator import SkipCoordinator
@@ -57,7 +58,6 @@ from podcast_commentary.agent.user_presence import (
     _AVATAR_IDENTITY_PREFIX,
     UserPresenceMonitor,
 )
-from podcast_commentary.core.config import settings
 from podcast_commentary.core.db import log_conversation_message
 
 logger = logging.getLogger("podcast-commentary.director")
@@ -175,10 +175,7 @@ class Director:
         self._timer = CommentaryTimer()
         self._full_transcript = FullTranscript()
         self._podcast = PodcastPipeline(on_transcript=self._handle_podcast_transcript)
-        self._selector = SpeakerSelector(
-            model=settings.DIRECTOR_LLM_MODEL,
-            max_consecutive=settings.DIRECTOR_MAX_CONSECUTIVE,
-        )
+        self._selector = SpeakerSelector()
         self._skip = SkipCoordinator(self._personas)
         self._control = ControlChannel(self._primary_room)
         self._playout = PlayoutWaiter()
@@ -214,10 +211,12 @@ class Director:
             base_silence_delay=SILENCE_FALLBACK_DELAY,
             apply_silence_delay=self._scheduler.set_silence_delay,
         )
+        self._selection_mode = SelectionModeController(selector=self._selector)
 
         # Inbound control wiring.
         self._control.register("skip", self._handle_skip)
         self._control.register("settings", self._handle_settings)
+        self._control.register("selection_mode", self._handle_selection_mode)
 
         self._shutting_down: bool = False
         # Tracked separately from the supervisor so a self-triggered
@@ -676,6 +675,13 @@ class Director:
     def update_settings(self, *, frequency: str | None = None, length: str | None = None) -> None:
         """Apply a new frequency/length preference from the UI."""
         self._settings.update(frequency=frequency, length=length)
+
+    def _handle_selection_mode(self, msg: dict) -> None:
+        """Apply a Speaker-pick mode (Ordered / Shuffle / Director) from the UI."""
+        self._tasks.fire_and_forget(
+            self._selection_mode.set_mode(msg.get("mode")),
+            name="director.selection_mode",
+        )
 
     # ==================================================================
     # Persistence

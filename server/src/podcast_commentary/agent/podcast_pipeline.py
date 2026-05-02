@@ -25,14 +25,14 @@ from collections.abc import Awaitable, Callable
 from livekit import rtc
 from livekit.plugins import groq
 
-from podcast_commentary.agent.fox_config import CONFIG
+from podcast_commentary.agent.persona_config import CONFIG
 
 logger = logging.getLogger("podcast-commentary.podcast_pipeline")
 
 # How often to send accumulated audio to Whisper for transcription.
 # 10 s ≈ 2-3 sentences at typical speaking pace; after two chunks the
 # personas have enough material (~5 sentences) to trigger commentary.
-# Sourced from the active FoxConfig preset.
+# Sourced from the active PersonaConfig preset.
 CHUNK_INTERVAL_SECONDS = CONFIG.timing.transcript_chunk_s
 
 

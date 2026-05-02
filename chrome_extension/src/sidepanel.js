@@ -17,6 +17,7 @@ import { SessionLifecycle } from "./session.js";
 import { fetchPersonasApi, friendlyApiError } from "./transport/api.js";
 import { showError } from "./ui/avatar-slots.js";
 import { initPacingControls } from "./ui/pacing-controls.js";
+import { initSelectionModeControl } from "./ui/selection-mode-control.js";
 import { renderSetupSlots } from "./ui/persona-renderer.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -34,7 +35,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // in the POST /api/sessions response, so the live stack stays
   // authoritative even if the setup fetch failed or was stale.
   fetchPersonasApi()
-    .then(({ personas }) => renderSetupSlots(personas))
+    .then((personas) => renderSetupSlots(personas))
     .catch((err) => {
       console.error("[ext] persona manifest fetch failed:", err);
       showError(friendlyApiError(err));
@@ -75,6 +76,14 @@ document.addEventListener("DOMContentLoaded", () => {
   // publish silently no-ops — the next session starts with the saved
   // values via `agent_ready`.
   initPacingControls(() => session.publishPacing());
+
+  // ── Selection mode (Ordered / Shuffle / Director) ──
+  // Same shape as pacing — module owns persistence (chrome.storage.sync),
+  // we forward the change to the agent. Pre-session changes still update
+  // local state and are republished on `agent_ready`.
+  initSelectionModeControl((m) => session.publishSelectionMode(m)).catch((err) =>
+    console.warn("[ext] selection-mode init failed:", err),
+  );
 
   // ── Content-script messages (filtered to the active tab) ──
   registerTabMessageListener(() => session.activeTabId, {

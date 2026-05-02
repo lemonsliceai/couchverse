@@ -37,7 +37,6 @@ import {
   DUCK_RMS_THRESHOLD,
   DUCK_TARGET_GAIN,
   PASSTHROUGH_GAIN,
-  PERSONA_TRIM_GAIN,
 } from "../config.js";
 
 export class AudioGraph {
@@ -111,7 +110,10 @@ export class AudioGraph {
   // with an analyser tap for the sidechain. Idempotent on key — calling
   // twice replaces the previous node so late reconnects don't leak
   // disconnected graph nodes.
-  attachPersona(track, key) {
+  //
+  // `trimGainValue` comes from the session's persona manifest; fall back
+  // to DEFAULT_PERSONA_TRIM if the caller didn't supply one.
+  attachPersona(track, key, trimGainValue = DEFAULT_PERSONA_TRIM) {
     if (this._personaNodes.has(key)) this.detachPersona(key);
 
     // Keep a muted <audio> element in the DOM purely as a WebRTC receiver
@@ -175,7 +177,7 @@ export class AudioGraph {
     }
 
     const trimGain = this._ctx.createGain();
-    trimGain.gain.value = PERSONA_TRIM_GAIN[key] ?? DEFAULT_PERSONA_TRIM;
+    trimGain.gain.value = trimGainValue;
 
     const analyser = this._ctx.createAnalyser();
     // 1024 samples ≈ 21ms at 48kHz — a whole syllable fits, so RMS

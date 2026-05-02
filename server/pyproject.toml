@@ -2,7 +2,7 @@
 name = "couchverse-server"
 version = "0.1.0"
 description = "Live AI commentary on whatever audio is playing in the user's browser tab"
-license = "MIT"
+license = "PolyForm-Noncommercial-1.0.0"
 requires-python = ">=3.11"
 dependencies = [
     "livekit-api~=1.0",

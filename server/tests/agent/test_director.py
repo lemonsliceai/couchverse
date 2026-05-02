@@ -15,18 +15,10 @@ from typing import Any
 
 import pytest
 
-from podcast_commentary.agent.comedian import FoxPhase, PersonaAgent
+from podcast_commentary.agent.comedian import PersonaPhase, PersonaAgent
 from podcast_commentary.agent.director import Director, PersonaContext
 
 from ._stub_config import make_stub_config
-
-
-@pytest.fixture(autouse=True)
-def _stub_groq_key(monkeypatch):
-    """SpeakerSelector instantiates a ``groq.LLM`` at construction; that
-    requires ``GROQ_API_KEY``. Set a stub so tests don't need network.
-    """
-    monkeypatch.setenv("GROQ_API_KEY", "test-key-not-used")
 
 
 class _FakeRoom:
@@ -114,22 +106,22 @@ def test_room_state_listening_only_when_all_personas_listening():
     state.mark_intros_done()
     # Both default to LISTENING after PersonaAgent construction — the
     # predicate should already be True.
-    assert primary.phase is FoxPhase.LISTENING
-    assert secondary.phase is FoxPhase.LISTENING
+    assert primary.phase is PersonaPhase.LISTENING
+    assert secondary.phase is PersonaPhase.LISTENING
     assert state.is_listening() is True
 
     # One persona enters COMMENTATING (via a legal transition) — the
     # room is no longer "all listening".
-    primary._set_phase(FoxPhase.COMMENTATING)
+    primary._set_phase(PersonaPhase.COMMENTATING)
     assert state.is_listening() is False
 
     # Bring primary back; secondary now drops out — still not "all listening".
-    primary._set_phase(FoxPhase.LISTENING)
-    secondary._set_phase(FoxPhase.COMMENTATING)
+    primary._set_phase(PersonaPhase.LISTENING)
+    secondary._set_phase(PersonaPhase.COMMENTATING)
     assert state.is_listening() is False
 
     # Both back to LISTENING — predicate flips back to True.
-    secondary._set_phase(FoxPhase.LISTENING)
+    secondary._set_phase(PersonaPhase.LISTENING)
     assert state.is_listening() is True
 
 
@@ -141,7 +133,7 @@ def test_room_state_blocks_until_intros_done():
     """
     director, personas, _ = _make_director("persona_a", "persona_b")
     state = director._room_state
-    assert all(p.phase is FoxPhase.LISTENING for p in personas)
+    assert all(p.phase is PersonaPhase.LISTENING for p in personas)
     assert state.is_listening() is False  # intros_done not yet set
     state.mark_intros_done()
     assert state.is_listening() is True

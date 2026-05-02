@@ -3,7 +3,7 @@
 A ``PersonaAgent`` owns only what is *intrinsically per-persona*:
 
   * ``SpeechGate`` — authoritative "is this persona speaking?" gate
-  * its own ``FoxPhase`` state machine
+  * its own ``PersonaPhase`` state machine
   * its own commentary history and rotated comedic angle
   * its own ``llm_node`` override for verbalized sampling
 
@@ -30,7 +30,7 @@ from typing import Any
 from livekit.agents import Agent, ModelSettings, llm
 from livekit.plugins import groq
 
-from podcast_commentary.agent.fox_config import FoxConfig
+from podcast_commentary.agent.persona_config import PersonaConfig
 from podcast_commentary.agent.prompts import build_commentary_request
 from podcast_commentary.agent.speech_gate import SpeechGate
 from podcast_commentary.agent.verbalized_sampling import (
@@ -94,7 +94,7 @@ def _deepest_audio_chain(node: Any | None, *, max_depth: int = 8) -> Any | None:
     return cur
 
 
-class FoxPhase(enum.Enum):
+class PersonaPhase(enum.Enum):
     """Per-persona lifecycle phases.
 
     Each PersonaAgent runs its own state machine. The Director coordinates
@@ -106,10 +106,10 @@ class FoxPhase(enum.Enum):
     COMMENTATING = "commentating"
 
 
-_VALID_TRANSITIONS: dict[FoxPhase, set[FoxPhase]] = {
-    FoxPhase.INTRO: {FoxPhase.LISTENING},
-    FoxPhase.LISTENING: {FoxPhase.COMMENTATING, FoxPhase.INTRO},
-    FoxPhase.COMMENTATING: {FoxPhase.LISTENING},
+_VALID_TRANSITIONS: dict[PersonaPhase, set[PersonaPhase]] = {
+    PersonaPhase.INTRO: {PersonaPhase.LISTENING},
+    PersonaPhase.LISTENING: {PersonaPhase.COMMENTATING, PersonaPhase.INTRO},
+    PersonaPhase.COMMENTATING: {PersonaPhase.LISTENING},
 }
 
 
@@ -119,14 +119,14 @@ class PersonaAgent(Agent):
     def __init__(
         self,
         *,
-        config: FoxConfig,
+        config: PersonaConfig,
         session_id: str | None = None,
         on_speech_start: Callable[["PersonaAgent"], None] | None = None,
         on_speech_end: Callable[["PersonaAgent"], None] | None = None,
         on_turn_finalised: Callable[["PersonaAgent", str, str | None], Awaitable[None]]
         | None = None,
     ) -> None:
-        super().__init__(instructions=config.persona.system_prompt)
+        super().__init__(instructions=config.character.system_prompt)
         self._config = config
         self._session_id = session_id
 
@@ -140,7 +140,7 @@ class PersonaAgent(Agent):
         self._recent_angles: list[str] = []
         self._pending_angle_name: str | None = None
         self._gate: SpeechGate | None = None
-        self._phase = FoxPhase.LISTENING
+        self._phase = PersonaPhase.LISTENING
         # UI-driven reply-length preference — "short" | "long" | None (normal).
         # Director sets this from the extension's settings message.
         self._length_hint: str | None = None
@@ -156,7 +156,7 @@ class PersonaAgent(Agent):
     # Public read-only state
     # ==================================================================
     @property
-    def config(self) -> FoxConfig:
+    def config(self) -> PersonaConfig:
         return self._config
 
     @property
@@ -165,10 +165,10 @@ class PersonaAgent(Agent):
 
     @property
     def label(self) -> str:
-        return self._config.persona.speaker_label or self._config.name
+        return self._config.character.speaker_label or self._config.name
 
     @property
-    def phase(self) -> FoxPhase:
+    def phase(self) -> PersonaPhase:
         return self._phase
 
     @property
@@ -325,14 +325,14 @@ class PersonaAgent(Agent):
         ``wait_for_playout`` with its own timeout safety net.
 
         The persona ships a pool of pre-authored variants
-        (``persona.intro_lines``); we pick one uniformly at random per
+        (``character.intro_lines``); we pick one uniformly at random per
         session so the same opener doesn't land every time. This is the
         standard fix for "the bot always greets me the same way" — random
         selection from a hand-authored pool keeps the voice tight without
         adding LLM latency or risk of off-brand output.
         """
-        self._set_phase(FoxPhase.INTRO)
-        line = random.choice(self._config.persona.intro_lines)
+        self._set_phase(PersonaPhase.INTRO)
+        line = random.choice(self._config.character.intro_lines)
         return self.gate.say(text=line)
 
     async def deliver_commentary(
@@ -365,7 +365,7 @@ class PersonaAgent(Agent):
             co_speaker_label=co_speaker_label,
             length_hint=self._length_hint,
         )
-        self._set_phase(FoxPhase.COMMENTATING)
+        self._set_phase(PersonaPhase.COMMENTATING)
         return self.gate.speak(prompt=prompt)
 
     def interrupt(self) -> None:
@@ -389,8 +389,8 @@ class PersonaAgent(Agent):
         it off mid-sentence. ``force_listening`` is the last-resort escape
         hatch when a handle is truly stuck and audio isn't flowing.
         """
-        if self._phase in (FoxPhase.INTRO, FoxPhase.COMMENTATING):
-            self._set_phase(FoxPhase.LISTENING)
+        if self._phase in (PersonaPhase.INTRO, PersonaPhase.COMMENTATING):
+            self._set_phase(PersonaPhase.LISTENING)
         if self._gate is not None:
             self._gate.interrupt()
 
@@ -447,7 +447,7 @@ class PersonaAgent(Agent):
     # ==================================================================
     # Phase transitions
     # ==================================================================
-    def _set_phase(self, new: FoxPhase) -> None:
+    def _set_phase(self, new: PersonaPhase) -> None:
         old = self._phase
         if old is new:
             return
@@ -466,8 +466,8 @@ class PersonaAgent(Agent):
 
     def _on_speech_released(self) -> None:
         """SpeechGate fires this when the current handle resolves."""
-        if self._phase in (FoxPhase.INTRO, FoxPhase.COMMENTATING):
-            self._set_phase(FoxPhase.LISTENING)
+        if self._phase in (PersonaPhase.INTRO, PersonaPhase.COMMENTATING):
+            self._set_phase(PersonaPhase.LISTENING)
 
     # ==================================================================
     # AgentSession events → Director callbacks
@@ -497,7 +497,7 @@ class PersonaAgent(Agent):
             # first leaves us in COMMENTATING/INTRO, the gate fails, and
             # the silence loop never re-arms (compounding the bug where
             # the loop dies on early-return).
-            if self._phase in (FoxPhase.INTRO, FoxPhase.COMMENTATING):
+            if self._phase in (PersonaPhase.INTRO, PersonaPhase.COMMENTATING):
                 self._on_speech_released()
             if self._on_speech_end_cb is not None:
                 try:
@@ -554,7 +554,7 @@ class PersonaAgent(Agent):
     def _rotate_angle(self) -> None:
         if self._pending_angle_name:
             self._recent_angles.append(self._pending_angle_name)
-            self._recent_angles = self._recent_angles[-self._config.persona.angle_lookback :]
+            self._recent_angles = self._recent_angles[-self._config.character.angle_lookback :]
         # NOTE: do NOT clear _pending_angle_name yet — the Director's
         # turn_finalised callback reads it for logging. It's overwritten
         # on the next deliver_* call.

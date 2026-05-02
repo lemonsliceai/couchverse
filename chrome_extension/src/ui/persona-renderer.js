@@ -22,7 +22,17 @@ function resolvePreview(personaName, filename) {
 }
 
 function badgeText({ label, descriptor }) {
-  return descriptor ? `${label} - ${descriptor}` : label;
+  return descriptor || label;
+}
+
+// Column count baked into --slot-min below: 1 col for N≤3, 2 for N=4,
+// 3 for N=5-9, 4 for N≥10. Mirroring this here lets us derive the row
+// count so CSS can size each tile to fit the container's height.
+function colsFor(n) {
+  if (n <= 3) return 1;
+  if (n <= 4) return 2;
+  if (n <= 9) return 3;
+  return 4;
 }
 
 // Setup-screen cast portraits. Rendered before any session exists, so
@@ -31,6 +41,25 @@ export function renderSetupSlots(personas) {
   const stack = document.getElementById("cast-stack");
   if (!stack) return;
   stack.replaceChildren();
+
+  // Same N-aware grid sizing as renderAvatarSlots, with a wider gap
+  // (14px) to match the existing setup-screen rhythm. 1-3 personas
+  // stay as a single tall column; N=4 lands on 2 cols (2x2), 5-9 on 3
+  // cols, 10+ on 4 cols. --rows lets the CSS sizing rule cap each
+  // tile's height to its share of the container so the whole block
+  // can sit centered without overflow.
+  const n = personas.length;
+  const cols = colsFor(n);
+  const rows = Math.ceil(n / cols);
+  let slotMin;
+  if (n <= 3) slotMin = "100%";
+  else if (n <= 4) slotMin = "calc(50% - 7px)";
+  else if (n <= 9) slotMin = "calc(33.333% - 10px)";
+  else slotMin = "calc(25% - 11px)";
+  stack.style.setProperty("--slot-min", slotMin);
+  stack.style.setProperty("--rows", String(rows));
+  stack.dataset.n = n <= 3 ? "stack" : n <= 9 ? "grid" : "dense";
+
   for (const p of personas) {
     const portrait = document.createElement("div");
     portrait.className = "cast-portrait";
@@ -61,11 +90,38 @@ export function renderAvatarSlots(personas) {
   const stack = document.getElementById("avatars-stack");
   if (!stack) return;
   stack.replaceChildren();
+
+  // N-aware grid sizing. The CSS grid-template uses
+  // `repeat(auto-fit, minmax(var(--slot-min), 1fr))`, so picking the
+  // minmax floor here is what decides how many columns we get for the
+  // current persona count. 1-3 personas stay as a single tall column
+  // (full-width tiles read better than half-empty grid rows); the grid
+  // kicks in at N=4 (2 cols), N=5-9 (3 cols), N=10+ (4 cols). --rows
+  // feeds the CSS sizing rule so each tile gets capped to its share of
+  // the container's height — the grid block then sits centered in
+  // whatever vertical space is left over.
+  const n = personas.length;
+  const cols = colsFor(n);
+  const rows = Math.ceil(n / cols);
+  let slotMin;
+  if (n <= 3) slotMin = "100%";
+  else if (n <= 4) slotMin = "calc(50% - 5px)";
+  else if (n <= 9) slotMin = "calc(33.333% - 7px)";
+  else slotMin = "calc(25% - 8px)";
+  stack.style.setProperty("--slot-min", slotMin);
+  stack.style.setProperty("--rows", String(rows));
+  stack.dataset.n = n <= 3 ? "stack" : n <= 9 ? "grid" : "dense";
+
   for (const p of personas) {
     const slot = document.createElement("div");
     slot.className = "avatar-slot has-preview";
     slot.dataset.name = p.name;
     slot.dataset.label = badgeText(p);
+
+    // Per-persona accent — drives the .speaking outline + shadow via
+    // CSS vars so adding a persona is config (manifest), not code.
+    if (p.accent_color) slot.style.setProperty("--slot-accent", p.accent_color);
+    if (p.accent_color_deep) slot.style.setProperty("--slot-accent-deep", p.accent_color_deep);
 
     const img = document.createElement("img");
     img.className = "avatar-preview";

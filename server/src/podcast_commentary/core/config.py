@@ -41,27 +41,29 @@ class Settings(BaseSettings):
     # dispatches to the deployed worker (or vice versa).
     AGENT_NAME: str = "podcast-commentary-agent"
 
-    # Comma-separated list of FoxConfig presets to load. Each preset becomes
-    # one on-screen persona; the Director picks who speaks each turn. The
-    # **first entry is the primary** — its room receives the LiveKit
+    # Comma-separated list of PersonaConfig presets to load. Each preset becomes
+    # one on-screen persona. The default speaking rotation follows this order
+    # (Ordered mode) but the user can switch to Director (LLM-judged) or
+    # Shuffle (random non-repeat) at runtime from the side panel.
+    # The **first entry is the primary** — its room receives the LiveKit
     # ``RoomAgentDispatch`` (the agent worker is dispatched there and
     # self-joins the rest as secondaries) and its timing values drive
-    # shared cadence. Reorder this list to change the primary.
+    # shared cadence.
     #
     # The shipping default is ``alien,cat_girl``. Other presets in
-    # ``fox_configs/`` (e.g. ``david_sacks``) are opt-in experiments —
+    # ``persona_configs/`` (e.g. ``david_sacks``) are opt-in experiments —
     # add them here to play with them, but they are not part of the
     # canonical lineup. When empty, every preset module is auto-discovered
     # (sorted) — useful for local dev when poking at a new preset.
     PERSONAS: str = "alien,cat_girl"
 
-    # Speaker-selection LLM (Director judge). Cheap + fast wins here — we
-    # only need a JSON pick, not creative writing. Same Groq model as the
-    # comedians; could be swapped for an even smaller one.
+    # Director-mode (LLM-judged speaker pick) settings. Only consulted when
+    # the user toggles the side panel's "Director" mode; Ordered/Shuffle do
+    # not touch the LLM. Director construction is lazy — switching back and
+    # forth between Ordered and Shuffle never instantiates ``groq.LLM``.
     DIRECTOR_LLM_MODEL: str = "llama-3.3-70b-versatile"
-    # Hard cap on consecutive turns from the same persona. The judge can
-    # ride a streak up to this number; on the next turn the cap forces a
-    # switch (or skip). 2 = "double-tap fine, triple-tap spammy".
+    # Hard cap on consecutive turns from the same persona under Director.
+    # 2 = "double-tap fine, triple-tap spammy".
     DIRECTOR_MAX_CONSECUTIVE: int = 2
 
     model_config = {"env_file": (".env", ".env.local"), "extra": "ignore"}

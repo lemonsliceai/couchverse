@@ -5,14 +5,14 @@ Per-turn context (transcript, history, angle) is assembled by
 ``build_commentary_request`` and passed as the ``user_input`` to
 ``generate_reply``.
 
-All prompt text is sourced from each persona's FoxConfig — see
-``fox_config.py`` and ``fox_configs/<persona>.py``. The functions below
+All prompt text is sourced from each persona's PersonaConfig — see
+``persona_config.py`` and ``persona_configs/<persona>.py``. The functions below
 accept the config explicitly so the same builder works for every active
 persona in the same process.
 """
 
 from podcast_commentary.agent.angles import pick_angle
-from podcast_commentary.agent.fox_config import CONFIG, FoxConfig
+from podcast_commentary.agent.persona_config import CONFIG, PersonaConfig
 
 # Sentinel that ``PersonaAgent.llm_node`` scans for to decide whether to
 # buffer the full LLM response and parse candidates. Persona-neutral so any
@@ -47,15 +47,15 @@ def _length_block(level: str | None) -> str | None:
 # Re-exported for back-compat. New code should call ``build_system_prompt``
 # with a specific persona's config — there is no "the" system prompt when
 # multiple personas share the room.
-COMEDIAN_SYSTEM_PROMPT = CONFIG.persona.system_prompt
+COMEDIAN_SYSTEM_PROMPT = CONFIG.character.system_prompt
 
 
-def build_system_prompt(config: FoxConfig) -> str:
+def build_system_prompt(config: PersonaConfig) -> str:
     """Each persona's system prompt — handed to its Agent at construction."""
-    return config.persona.system_prompt
+    return config.character.system_prompt
 
 
-def _sampling_instruction(config: FoxConfig) -> str | None:
+def _sampling_instruction(config: PersonaConfig) -> str | None:
     """Pipeline-level output-format directive appended when VS is enabled.
 
     Persona-neutral: never says "joke" or "punchline" — each preset's own
@@ -87,7 +87,7 @@ def _sampling_instruction(config: FoxConfig) -> str | None:
 
 
 def _format_context_bundle(
-    config: FoxConfig,
+    config: PersonaConfig,
     *,
     recent_transcript: str,
     commentary_history: list[str],
@@ -134,7 +134,7 @@ def _format_context_bundle(
 
 def build_commentary_request(
     *,
-    config: FoxConfig,
+    config: PersonaConfig,
     recent_transcript: str,
     commentary_history: list[str],
     trigger_reason: str,
@@ -159,7 +159,7 @@ def build_commentary_request(
     parts.append(f"[WHY YOU'RE SPEAKING NOW]\n{trigger_reason}")
     parts.append(f"[ENERGY] {energy_level}")
     parts.append(f"[LENS: {angle}]")
-    parts.append(config.persona.commentary_cta)
+    parts.append(config.character.commentary_cta)
 
     length_block = _length_block(length_hint)
     if length_block:

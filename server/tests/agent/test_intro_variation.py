@@ -48,7 +48,7 @@ def test_speak_intro_rotates_through_intro_lines():
     base = make_stub_config("persona_a")
     config = dataclasses.replace(
         base,
-        persona=dataclasses.replace(base.persona, intro_lines=pool),
+        character=dataclasses.replace(base.character, intro_lines=pool),
     )
     persona = PersonaAgent(config=config)
     gate = _RecordingGate()
@@ -70,7 +70,7 @@ def test_speak_intro_handles_single_element_pool():
     base = make_stub_config("persona_a")
     config = dataclasses.replace(
         base,
-        persona=dataclasses.replace(base.persona, intro_lines=("only-line",)),
+        character=dataclasses.replace(base.character, intro_lines=("only-line",)),
     )
     persona = PersonaAgent(config=config)
     gate = _RecordingGate()

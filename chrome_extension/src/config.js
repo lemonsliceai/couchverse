@@ -32,12 +32,11 @@ export const DUCK_TARGET_GAIN = 0.15; // ~-16 dB
 export const DUCK_ATTACK_TAU = 0.05; // seconds
 export const DUCK_RELEASE_TAU = 0.3; // seconds
 export const DUCK_HOLD_MS = 500;
-// Per-persona output trim. ElevenLabs voices ship at different reference
-// loudness; this normalizes them at the client so the mix is balanced.
-// Add new personas here as they're introduced.
-export const PERSONA_TRIM_GAIN = {
-  alien: 1.0, // Dave voice — our reference level
-};
+// Per-persona output trim defaults to 1.0 (our ElevenLabs reference
+// level). Per-persona overrides ride on the persona manifest as
+// `trim_gain` and are threaded into the audio graph by SessionLifecycle —
+// keep this here as the single fallback for personas the manifest didn't
+// stamp a trim on.
 export const DEFAULT_PERSONA_TRIM = 1.0;
 
 // Pacing persistence. Bump PACING_SCHEMA_VERSION whenever the on-disk
@@ -46,6 +45,14 @@ export const DEFAULT_PERSONA_TRIM = 1.0;
 export const PACING_STORAGE_KEY = "couchverse.pacing";
 export const PACING_SCHEMA_VERSION = 1;
 export const PACING_DEFAULTS = { frequency: "normal", length: "normal" };
+
+// Selection-mode persistence. Persisted to chrome.storage.sync so the
+// user's "Speaker pick" choice rides along with the Chrome profile across
+// devices. The set must match the agent-side ``SELECTION_MODES`` tuple.
+export const SELECTION_MODE_STORAGE_KEY = "couchverse.selectionMode";
+export const SELECTION_MODE_SCHEMA_VERSION = 1;
+export const SELECTION_MODE_DEFAULT = "ordered";
+export const SELECTION_MODES = ["ordered", "shuffle", "director"];
 
 // Session lifecycle states. Single source of truth for what the session
 // can and cannot do right now:

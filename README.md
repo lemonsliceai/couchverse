@@ -6,7 +6,7 @@
 
 Two AI co-hosts, **Alien** and **Cat girl**, react in real time to any audio playing in your browser tab. Think MST3K, except the hecklers live in your Chrome side panel and they'll cover a podcast or a TikTok feed as happily as a movie.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm--NC-blue.svg)](LICENSE)
 [![Chrome MV3](https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white)](chrome_extension/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg?logo=python&logoColor=white)](server/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
@@ -33,7 +33,7 @@ The hosts don't know or care what site the audio came from. They only hear it.
 ## Highlights
 
 - **Zero server-side audio extraction.** The extension captures the tab with `chrome.tabCapture` and publishes it to LiveKit. The agent subscribes to the track. No scraping, no per-site hacks.
-- **Two personas out of the box.** Alien (the sniper one-liner machine) and Cat girl (the moody emo deadpan) share one `FoxConfig` schema, so swapping or adding personalities is a single file drop.
+- **Two personas out of the box.** Alien (the sniper one-liner machine) and Cat girl (the moody emo deadpan) share one `PersonaConfig` schema, so swapping or adding personalities is a single file drop.
 - **Optional persistence.** Plug in Neon PostgreSQL to log conversations, or leave `DATABASE_URL` blank and run ephemerally.
 - **Portable.** Frontend runs anywhere Chrome does; the server runs locally with `uv` or on Fly.io with two processes.
 
@@ -126,7 +126,7 @@ Alien's foil. Moody, slightly sarcastic riffs in a flat voice — secretly atten
 </tr>
 </table>
 
-Both are driven by the same `FoxConfig` schema in `server/src/podcast_commentary/agent/`. Drop a new file in `fox_configs/` and add it to `PERSONAS` to load it. See the [server README](server/README.md#foxconfig--tuning-host-behaviour) for the full walkthrough.
+Both are driven by the same `PersonaConfig` schema in `server/src/podcast_commentary/agent/`. Drop a new file in `persona_configs/` and add it to `PERSONAS` to load it. See the [server README](server/README.md#personaconfig--tuning-host-behaviour) for the full walkthrough.
 
 ## Project layout
 
@@ -149,7 +149,12 @@ Both are driven by the same `FoxConfig` schema in `server/src/podcast_commentary
 
 ## License
 
-Released under the [MIT License](LICENSE).
+Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+
+- **Free** for personal, research, educational, and other noncommercial use.
+- **Any commercial use** — including use by or on behalf of a for-profit entity — requires a separate commercial license from LemonSlice. Contact **eos@lemonslice.com**.
+
+This is a source-available license, not an OSI-approved open source license.
 
 <div align="center">
 

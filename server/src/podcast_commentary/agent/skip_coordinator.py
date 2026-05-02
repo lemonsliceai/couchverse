@@ -19,14 +19,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 
-from podcast_commentary.agent.comedian import FoxPhase, PersonaAgent
+from podcast_commentary.agent.comedian import PersonaPhase, PersonaAgent
 
 logger = logging.getLogger("podcast-commentary.skip")
 
 
 # Phases the Skip button is allowed to cut off. Intros and idle
 # listening are explicitly NOT in this set.
-_SKIPPABLE_PHASES: frozenset[FoxPhase] = frozenset({FoxPhase.COMMENTATING})
+_SKIPPABLE_PHASES: frozenset[PersonaPhase] = frozenset({PersonaPhase.COMMENTATING})
 
 
 class SkipCoordinator:

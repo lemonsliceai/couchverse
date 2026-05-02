@@ -32,14 +32,6 @@ from podcast_commentary.agent.director import Director, PersonaContext
 from ._stub_config import make_stub_config
 
 
-@pytest.fixture(autouse=True)
-def _stub_groq_key(monkeypatch):
-    """SpeakerSelector instantiates a ``groq.LLM`` at construction; that
-    requires ``GROQ_API_KEY``. Set a stub so tests don't need network.
-    """
-    monkeypatch.setenv("GROQ_API_KEY", "test-key-not-used")
-
-
 class _FakeParticipant:
     def __init__(self, identity: str) -> None:
         self.identity = identity

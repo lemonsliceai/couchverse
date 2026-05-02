@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import time
 
-from podcast_commentary.agent.comedian import FoxPhase, PersonaAgent
+from podcast_commentary.agent.comedian import PersonaPhase, PersonaAgent
 
 
 class RoomState:
@@ -69,7 +69,7 @@ class RoomState:
         """
         if not self.intros_done.is_set():
             return False
-        return all(p.phase == FoxPhase.LISTENING for p in self._personas)
+        return all(p.phase == PersonaPhase.LISTENING for p in self._personas)
 
 
 __all__ = ["RoomState"]

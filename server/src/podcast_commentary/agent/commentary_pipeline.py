@@ -15,7 +15,7 @@ import time
 from podcast_commentary.agent.comedian import PersonaAgent
 from podcast_commentary.agent.commentary import CommentaryTimer, FullTranscript
 from podcast_commentary.agent.control_channel import ControlChannel
-from podcast_commentary.agent.fox_config import CONFIG
+from podcast_commentary.agent.persona_config import CONFIG
 from podcast_commentary.agent.metrics import (
     commentary_co_speaker_referenced_total,
     commentary_inter_gap_seconds,
@@ -59,7 +59,6 @@ class CommentaryPipeline:
         # must not both win the selector race and double-tap.
         self._lock = asyncio.Lock()
         self._last_speaker: str | None = None
-        self._consecutive_count: int = 0
         # Monotonic timestamp of the last commentary turn's playout
         # completion. ``None`` until the first turn finishes,
         # so the first turn's gap is intentionally not recorded — there
@@ -83,7 +82,6 @@ class CommentaryPipeline:
                 transcript=self._full_transcript.recent_transcript(),
                 trigger_reason=trigger_reason,
                 last_speaker=self._last_speaker,
-                consecutive_count=self._consecutive_count,
             )
             if self._room_state.shutting_down:
                 return
@@ -141,7 +139,7 @@ class CommentaryPipeline:
             # Reset the read cursor AFTER prompt is built (deliver_commentary
             # already read it) so the next persona reacts to NEW podcast text.
             self._full_transcript.reset_sentence_count()
-            self._note_speaker(persona.name)
+            self._last_speaker = persona.name
 
             try:
                 await self._playout.wait(
@@ -196,14 +194,6 @@ class CommentaryPipeline:
             return None, None
         co = others[0]
         return co.commentary_history, co.label
-
-    def _note_speaker(self, name: str) -> None:
-        """Bookkeep consecutive-turn streaks for the selector's cap."""
-        if name == self._last_speaker:
-            self._consecutive_count += 1
-        else:
-            self._consecutive_count = 1
-        self._last_speaker = name
 
 
 __all__ = ["CommentaryPipeline", "COMMENTARY_PLAYOUT_TIMEOUT"]

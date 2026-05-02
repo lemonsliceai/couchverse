@@ -17,7 +17,7 @@ from podcast_commentary.agent.commentary import (
     FullTranscript,
 )
 from podcast_commentary.agent.commentary_pipeline import CommentaryPipeline
-from podcast_commentary.agent.fox_config import CONFIG
+from podcast_commentary.agent.persona_config import CONFIG
 from podcast_commentary.agent.room_state import RoomState
 from podcast_commentary.agent.task_supervisor import TaskSupervisor
 

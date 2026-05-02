@@ -1,19 +1,16 @@
-"""FoxConfig — every knob that shapes a persona's behaviour, in one place.
+"""PersonaConfig — every knob that shapes a persona's behaviour, in one place.
 
-Presets live in ``fox_configs/<name>.py`` and each export a top-level
-``CONFIG: FoxConfig``. The active presets are selected by the ``PERSONAS``
+Presets live in ``persona_configs/<name>.py`` and each export a top-level
+``CONFIG: PersonaConfig``. The active presets are selected by the ``PERSONAS``
 env var (comma-separated list); when unset, every preset in
-``fox_configs/`` is auto-discovered in sorted order. Switch by editing
+``persona_configs/`` is auto-discovered in sorted order. Switch by editing
 that var in ``server/.env`` and restarting the agent.
 
-The schema is named ``FoxConfig`` for historical reasons; it governs every
-persona — the name is historical, not preset-specific.
-
 To add a new preset:
-  1. Copy any existing file in ``fox_configs/`` to
-     ``fox_configs/<my_preset>.py``.
+  1. Copy any existing file in ``persona_configs/`` to
+     ``persona_configs/<my_preset>.py``.
   2. Edit any field you want to tune (start with ``name`` and the
-     ``persona``/``avatar``/``tts`` blocks).
+     ``character``/``avatar``/``tts`` blocks).
   3. Add ``<my_preset>`` to ``PERSONAS`` in ``server/.env`` (or leave it
      unset to load every preset including this one).
   4. Restart the agent.
@@ -26,12 +23,12 @@ from __future__ import annotations
 
 import importlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from podcast_commentary.core.config import settings
 
-logger = logging.getLogger("podcast-commentary.fox_config")
+logger = logging.getLogger("podcast-commentary.persona_config")
 
 
 # ---------------------------------------------------------------------------
@@ -40,7 +37,7 @@ logger = logging.getLogger("podcast-commentary.fox_config")
 
 
 @dataclass(frozen=True)
-class PersonaConfig:
+class CharacterConfig:
     """The words a persona uses: system prompt, intro, CTAs, comedic angles."""
 
     system_prompt: str
@@ -121,9 +118,12 @@ class AvatarConfig:
     active_prompt: str
     idle_prompt: str
     startup_timeout_s: float
-    # Filename of this persona's avatar image served under ``/static/``.
-    # The full URL is built by joining ``settings.AVATAR_BASE_URL`` with
-    # this filename — see ``AvatarConfig.avatar_url``.
+    # Filename of this persona's avatar image. Served under
+    # ``/characters/`` from ``settings.AVATAR_BASE_URL`` — production
+    # points at the marketing site (couchverse.tv), which already hosts
+    # the cast portraits used by the landing page. The API also mounts
+    # the same directory at ``/characters/`` so a self-hosted setup
+    # pointing ``AVATAR_BASE_URL`` at the API still works.
     avatar_image: str = ""
 
     @property
@@ -132,7 +132,7 @@ class AvatarConfig:
         base = settings.AVATAR_BASE_URL
         if not base or not self.avatar_image:
             return ""
-        return f"{base.rstrip('/')}/static/{self.avatar_image}"
+        return f"{base.rstrip('/')}/characters/{self.avatar_image}"
 
 
 @dataclass(frozen=True)
@@ -184,11 +184,25 @@ class SamplingConfig:
 
 
 @dataclass(frozen=True)
-class FoxConfig:
+class DisplayConfig:
+    """Per-persona presentation knobs the extension renders verbatim.
+
+    Keeping accent colors and TTS trim gain on the server lets a persona
+    ship without a coordinated extension release — the manifest endpoint
+    is the single source of truth for what the side panel paints.
+    """
+
+    accent_color: str = "#7ed4c2"
+    accent_color_deep: str = "#3e9d8a"
+    trim_gain: float = 1.0
+
+
+@dataclass(frozen=True)
+class PersonaConfig:
     """All tunable persona behaviour, grouped by subsystem."""
 
     name: str
-    persona: PersonaConfig
+    character: CharacterConfig
     timing: TimingConfig
     context: ContextConfig
     llm: LLMConfig
@@ -198,6 +212,7 @@ class FoxConfig:
     avatar: AvatarConfig
     playout: PlayoutConfig
     sampling: SamplingConfig = SamplingConfig()
+    display: DisplayConfig = field(default_factory=DisplayConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -205,11 +220,11 @@ class FoxConfig:
 # ---------------------------------------------------------------------------
 
 
-_PRESET_PACKAGE = "podcast_commentary.agent.fox_configs"
+_PRESET_PACKAGE = "podcast_commentary.agent.persona_configs"
 
 
-def load_config(name: str) -> FoxConfig:
-    """Import ``fox_configs.<name>`` and return its ``CONFIG`` export."""
+def load_config(name: str) -> PersonaConfig:
+    """Import ``persona_configs.<name>`` and return its ``CONFIG`` export."""
     name = name.strip()
     module_path = f"{_PRESET_PACKAGE}.{name}"
     try:
@@ -217,18 +232,18 @@ def load_config(name: str) -> FoxConfig:
     except ModuleNotFoundError as exc:
         raise RuntimeError(
             f"persona {name!r} does not resolve to a preset — expected "
-            f"server/src/podcast_commentary/agent/fox_configs/{name}.py"
+            f"server/src/podcast_commentary/agent/persona_configs/{name}.py"
         ) from exc
 
     cfg = getattr(module, "CONFIG", None)
-    if not isinstance(cfg, FoxConfig):
-        raise RuntimeError(f"{module_path} must export a top-level `CONFIG: FoxConfig`")
-    logger.info("Loaded FoxConfig preset %r", cfg.name)
+    if not isinstance(cfg, PersonaConfig):
+        raise RuntimeError(f"{module_path} must export a top-level `CONFIG: PersonaConfig`")
+    logger.info("Loaded PersonaConfig preset %r", cfg.name)
     return cfg
 
 
 def _discover_preset_names() -> list[str]:
-    """All preset module names available in ``fox_configs/``, sorted.
+    """All preset module names available in ``persona_configs/``, sorted.
 
     Used as the default lineup when ``PERSONAS`` is empty so the agent
     has no character names baked into code — every shipped preset is
@@ -252,8 +267,8 @@ def _resolve_persona_names() -> list[str]:
 
     ``PERSONAS`` (comma-separated) wins when set. The shipping default is
     ``alien,cat_girl`` (set in ``settings.PERSONAS``); other presets in
-    ``fox_configs/`` are opt-in experiments. If the value is explicitly
-    cleared, fall back to every preset in ``fox_configs/`` sorted — handy
+    ``persona_configs/`` are opt-in experiments. If the value is explicitly
+    cleared, fall back to every preset in ``persona_configs/`` sorted — handy
     for local dev when poking at a new preset.
     """
     raw = (settings.PERSONAS or "").strip()
@@ -264,18 +279,18 @@ def _resolve_persona_names() -> list[str]:
     discovered = _discover_preset_names()
     if not discovered:
         raise RuntimeError(
-            "no FoxConfig presets found — set PERSONAS or add a module to "
-            "server/src/podcast_commentary/agent/fox_configs/"
+            "no PersonaConfig presets found — set PERSONAS or add a module to "
+            "server/src/podcast_commentary/agent/persona_configs/"
         )
     return discovered
 
 
-def load_active_configs() -> list[FoxConfig]:
+def load_active_configs() -> list[PersonaConfig]:
     """Load every persona named in ``PERSONAS``."""
     return [load_config(n) for n in _resolve_persona_names()]
 
 
-def load_active_config() -> FoxConfig:
+def load_active_config() -> PersonaConfig:
     """First persona only — kept for back-compat with the single-persona path."""
     return load_active_configs()[0]
 
@@ -284,4 +299,4 @@ def load_active_config() -> FoxConfig:
 # as a module-level constant. With multiple personas, this is the FIRST
 # (primary) persona; shared modules (CommentaryTimer, FullTranscript,
 # PodcastPipeline) read its timing values to drive global cadence.
-CONFIG: FoxConfig = load_active_config()
+CONFIG: PersonaConfig = load_active_config()

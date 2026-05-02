@@ -8,12 +8,12 @@ import logging
 import re
 import time
 
-from podcast_commentary.agent.fox_config import CONFIG
+from podcast_commentary.agent.persona_config import CONFIG
 
 logger = logging.getLogger("podcast-commentary.timing")
 transcript_logger = logging.getLogger("podcast-commentary.transcript")
 
-# Timing parameters (seconds) — sourced from the active FoxConfig preset.
+# Timing parameters (seconds) — sourced from the active PersonaConfig preset.
 # MIN_GAP measures from *speech end* (avatar playback_finished), not speech
 # start, so the gate reflects the listener's experience of silence.
 MIN_GAP = CONFIG.timing.min_silence_between_jokes_s

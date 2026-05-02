@@ -84,7 +84,7 @@ def client(monkeypatch):
 
     monkeypatch.setattr(sessions_module, "create_session", _fake_create_session)
 
-    # Route loads each persona's FoxConfig to populate the dispatch metadata
+    # Route loads each persona's PersonaConfig to populate the dispatch metadata
     # (label, avatar_url). Stub the loader so the test never touches the
     # real preset bank — keeps it character-agnostic and decoupled from
     # whichever presets happen to ship today.

@@ -15,9 +15,13 @@ let onChangeCallback = null;
 export function initPacingControls(onChange) {
   onChangeCallback = onChange ?? null;
   Object.assign(pacing, loadPacing());
-  for (const group of document.querySelectorAll(".segmented")) {
+  // Scope to pacing's own settings — other segmented controls
+  // (e.g. selection-mode) own their own click handler and persistence.
+  const groups = document.querySelectorAll(
+    '.segmented[data-setting="frequency"], .segmented[data-setting="length"]',
+  );
+  for (const group of groups) {
     const setting = group.dataset.setting;
-    if (!setting) continue;
     syncSegmentedGroup(group, pacing[setting]);
     group.addEventListener("click", (ev) => {
       const btn = ev.target.closest(".seg-btn");

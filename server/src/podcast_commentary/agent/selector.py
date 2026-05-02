@@ -1,22 +1,23 @@
 """Speaker selection — picks which PersonaAgent speaks each turn.
 
-Previously inlined in ``director.py``; lifted into its own module so the
-Director focuses on orchestration (timers, intros, data channel) and the
-selection concern (LLM prompt + parsing + fallback) lives in one place.
+Three strategies, swappable at runtime from the side panel:
 
-Public surface is tiny: construct one ``SpeakerSelector`` per room, then
-``await selector.pick(...)`` every time you want to route a turn.
+  * ``OrderedStrategy``  — strict round-robin in PERSONAS-list order (default).
+  * ``ShuffleStrategy``  — uniform random pick excluding the last speaker.
+  * ``DirectorStrategy`` — LLM-judged pick (lives in ``director_strategy.py``
+    because it carries its own LLM client, prompt, timeout, and fallback).
+
+The pipeline always calls ``SpeakerSelector.pick(...)``; the active
+strategy is held behind a swap lock so a mode change between turns lands
+atomically without tearing a pick mid-call.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from typing import TYPE_CHECKING
-
-from livekit.agents import llm
-from livekit.plugins import groq
+import random
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from podcast_commentary.agent.comedian import PersonaAgent
@@ -24,32 +25,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger("podcast-commentary.selector")
 
 
-# Hard cap on the selector call. Missing this window falls back to
-# round-robin — better a slightly-wrong pick than dead air.
-_PICK_TIMEOUT_S = 2.5
-
-_SELECTOR_SYSTEM = (
-    "You are the show director for a multi-persona AI commentary track on top "
-    "of a podcast. Your only job is to pick which comedian persona should "
-    "speak next. Someone ALWAYS speaks — skipping is not an option.\n\n"
-    "Optimise for what would be FUNNIEST and MOST VARIED for the audience:\n"
-    "- prefer the persona whose voice has been quiet recently\n"
-    "- prefer the persona whose comedic lane fits the current transcript\n"
-    "- if the same persona just spoke, switch — back-to-back-to-back from "
-    "one speaker is dull\n\n"
-    "Reply with strict JSON only: "
-    '{"speaker":"<persona-name>","reason":"<one short clause>"}.\n'
-    "Use the lowercase `name` field from the candidate block, NOT the label. "
-    "No prose, no markdown, no extra keys."
-)
+SELECTION_MODES: tuple[str, ...] = ("ordered", "shuffle", "director")
+DEFAULT_SELECTION_MODE = "ordered"
 
 
-class SpeakerSelector:
-    """Owns the selector LLM and the filter/fallback rules around it."""
+class SpeakerSelectorStrategy(Protocol):
+    """Common surface every strategy implements."""
 
-    def __init__(self, *, model: str, max_consecutive: int) -> None:
-        self._llm = groq.LLM(model=model, max_completion_tokens=80)
-        self._max_consecutive = max_consecutive
+    name: str
 
     async def pick(
         self,
@@ -58,127 +41,116 @@ class SpeakerSelector:
         transcript: str,
         trigger_reason: str,
         last_speaker: str | None,
-        consecutive_count: int,
-    ) -> str:
-        """Return a persona name to speak. Never skips — the show must go on.
+    ) -> str: ...
 
-        Strategy:
-          1. Filter out personas over the consecutive-turn cap.
-          2. Ask the LLM with a short timeout. Fall back to round-robin
-             on any failure (including a SKIP from a stale prompt cache).
-        """
-        eligible = [p for p in personas if self._is_eligible(p, last_speaker, consecutive_count)]
 
-        try:
-            return await asyncio.wait_for(
-                self._llm_pick(
-                    eligible, transcript, trigger_reason, last_speaker, consecutive_count
-                ),
-                timeout=_PICK_TIMEOUT_S,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("Selector LLM timed out — falling back to round-robin")
-        except Exception:
-            logger.warning("Selector LLM raised — falling back to round-robin", exc_info=True)
-        return self._round_robin(eligible, last_speaker).name
+class OrderedStrategy:
+    """Strict round-robin in PERSONAS list order."""
 
-    # ------------------------------------------------------------------
-    # Filter + fallback
-    # ------------------------------------------------------------------
-    def _is_eligible(
-        self, persona: PersonaAgent, last_speaker: str | None, consecutive_count: int
-    ) -> bool:
-        """A persona is eligible unless it just hit the consecutive cap."""
-        if persona.name != last_speaker:
-            return True
-        return consecutive_count < self._max_consecutive
+    name = "ordered"
 
-    @staticmethod
-    def _round_robin(pool: list[PersonaAgent], last_speaker: str | None) -> PersonaAgent:
-        others = [p for p in pool if p.name != last_speaker]
-        return others[0]
-
-    # ------------------------------------------------------------------
-    # LLM call + parse
-    # ------------------------------------------------------------------
-    async def _llm_pick(
+    async def pick(
         self,
-        eligible: list[PersonaAgent],
+        *,
+        personas: list[PersonaAgent],
+        transcript: str,  # noqa: ARG002
+        trigger_reason: str,  # noqa: ARG002
+        last_speaker: str | None,
+    ) -> str:
+        if last_speaker is None:
+            return personas[0].name
+        for i, p in enumerate(personas):
+            if p.name == last_speaker:
+                return personas[(i + 1) % len(personas)].name
+        return personas[0].name
+
+
+class ShuffleStrategy:
+    """Uniform random pick, never repeating the last speaker."""
+
+    name = "shuffle"
+
+    def __init__(self, *, rng: random.Random | None = None) -> None:
+        # SystemRandom by default; tests opt in to a seeded RNG.
+        self._rng = rng or random.SystemRandom()
+
+    async def pick(
+        self,
+        *,
+        personas: list[PersonaAgent],
+        transcript: str,  # noqa: ARG002
+        trigger_reason: str,  # noqa: ARG002
+        last_speaker: str | None,
+    ) -> str:
+        candidates = [p for p in personas if p.name != last_speaker] or personas
+        return self._rng.choice(candidates).name
+
+
+class SpeakerSelector:
+    """Holds the active strategy and serializes mode swaps with picks."""
+
+    def __init__(self, *, default_mode: str = DEFAULT_SELECTION_MODE) -> None:
+        if default_mode not in SELECTION_MODES:
+            raise ValueError(f"Unknown default_mode: {default_mode!r}")
+        # Director is constructed lazily on first activation so an
+        # Ordered-only session never instantiates ``groq.LLM``.
+        self._strategies: dict[str, SpeakerSelectorStrategy] = {
+            "ordered": OrderedStrategy(),
+            "shuffle": ShuffleStrategy(),
+        }
+        if default_mode == "director":
+            self._strategies["director"] = self._build_director()
+        self._active = self._strategies[default_mode]
+        self._swap_lock = asyncio.Lock()
+
+    @property
+    def mode(self) -> str:
+        return self._active.name
+
+    async def pick(
+        self,
+        *,
+        personas: list[PersonaAgent],
         transcript: str,
         trigger_reason: str,
         last_speaker: str | None,
-        consecutive_count: int,
     ) -> str:
-        prompt = self._build_prompt(
-            eligible, transcript, trigger_reason, last_speaker, consecutive_count
+        # Snapshot under the swap lock so a concurrent ``set_mode``
+        # can't tear ``_active`` mid-pick. The pick itself runs unlocked
+        # so a slow Director call doesn't block subsequent mode swaps.
+        async with self._swap_lock:
+            strategy = self._active
+        return await strategy.pick(
+            personas=personas,
+            transcript=transcript,
+            trigger_reason=trigger_reason,
+            last_speaker=last_speaker,
         )
-        chat_ctx = llm.ChatContext.empty()
-        chat_ctx.add_message(role="system", content=_SELECTOR_SYSTEM)
-        chat_ctx.add_message(role="user", content=prompt)
 
-        buf: list[str] = []
-        async with self._llm.chat(chat_ctx=chat_ctx) as stream:
-            async for chunk in stream:
-                if chunk.delta and chunk.delta.content:
-                    buf.append(chunk.delta.content)
-        raw = "".join(buf).strip()
-        return self._parse_response(raw, eligible, last_speaker)
+    async def set_mode(self, mode: str) -> bool:
+        """Switch the active strategy. Returns False on unknown mode."""
+        if mode not in SELECTION_MODES:
+            return False
+        async with self._swap_lock:
+            if mode not in self._strategies:
+                self._strategies[mode] = self._build_director()
+            self._active = self._strategies[mode]
+        return True
 
     @staticmethod
-    def _build_prompt(
-        eligible: list[PersonaAgent],
-        transcript: str,
-        trigger_reason: str,
-        last_speaker: str | None,
-        consecutive_count: int,
-    ) -> str:
-        candidates_block: list[str] = []
-        for p in eligible:
-            recent = p.commentary_history[-3:]
-            recent_text = "\n  ".join(f"- {line}" for line in recent) or "(none yet)"
-            candidates_block.append(
-                f'CANDIDATE name="{p.name}" label="{p.label}"\n  recent lines:\n  {recent_text}'
-            )
+    def _build_director() -> SpeakerSelectorStrategy:
+        # Local import keeps Director's livekit/groq dependencies out of
+        # the import path for Ordered-only sessions.
+        from podcast_commentary.agent.director_strategy import DirectorStrategy
 
-        last_line = ""
-        if last_speaker:
-            count_note = f" ({consecutive_count} in a row)" if consecutive_count else ""
-            last_line = f"\nLAST SPEAKER: {last_speaker}{count_note}"
-
-        return (
-            "Pick which persona speaks next. Someone MUST speak — skipping "
-            "is not an option.\n\n"
-            f"RECENT TRANSCRIPT:\n{transcript or '(silent)'}\n\n"
-            f"TRIGGER: {trigger_reason}{last_line}\n\n"
-            + "\n\n".join(candidates_block)
-            + '\n\nRespond with strict JSON: {"speaker":"<name>","reason":"..."}'
-        )
-
-    def _parse_response(
-        self, raw: str, eligible: list[PersonaAgent], last_speaker: str | None
-    ) -> str:
-        payload = raw.strip()
-        # Strip markdown fences if the model added them.
-        if payload.startswith("```"):
-            payload = payload.strip("`")
-            if payload.lower().startswith("json"):
-                payload = payload[4:]
-            payload = payload.strip()
-        try:
-            data = json.loads(payload)
-            speaker = (data.get("speaker") or "").strip()
-            reason = (data.get("reason") or "").strip()
-        except (json.JSONDecodeError, AttributeError, TypeError):
-            logger.warning("Selector LLM produced invalid JSON: %r", raw[:120])
-            return self._round_robin(eligible, last_speaker).name
-
-        if any(p.name == speaker for p in eligible):
-            logger.info("Selector picked %s (%s)", speaker, reason)
-            return speaker
-        # Stale prompt caches or a hallucinated "skip" both land here —
-        # the contract is now that someone always speaks, so fall back.
-        logger.warning("Selector picked %r which isn't eligible — round-robin fallback", speaker)
-        return self._round_robin(eligible, last_speaker).name
+        return DirectorStrategy()
 
 
-__all__ = ["SpeakerSelector"]
+__all__ = [
+    "DEFAULT_SELECTION_MODE",
+    "OrderedStrategy",
+    "SELECTION_MODES",
+    "ShuffleStrategy",
+    "SpeakerSelector",
+    "SpeakerSelectorStrategy",
+]

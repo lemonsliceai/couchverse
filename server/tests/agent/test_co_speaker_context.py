@@ -18,22 +18,11 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-import pytest
-
 from podcast_commentary.agent.comedian import PersonaAgent
 from podcast_commentary.agent.director import Director, PersonaContext
 from podcast_commentary.agent.prompts import build_commentary_request
 
 from ._stub_config import make_stub_config
-
-
-@pytest.fixture(autouse=True)
-def _stub_groq_key(monkeypatch):
-    """SpeakerSelector instantiates ``groq.LLM`` at construction time —
-    that requires ``GROQ_API_KEY`` even though the test never makes a
-    network call. Stub a value so the constructor succeeds.
-    """
-    monkeypatch.setenv("GROQ_API_KEY", "test-key-not-used")
 
 
 class _FakeRoom:
@@ -71,7 +60,7 @@ def _make_persona(name: str, *, label: str | None = None) -> PersonaAgent:
     """Build a PersonaAgent without going through ``session.start``.
 
     The Agent base class only needs ``instructions=...``; we feed it
-    a stub ``FoxConfig`` with no ties to any shipped preset.
+    a stub ``PersonaConfig`` with no ties to any shipped preset.
     """
     return PersonaAgent(config=make_stub_config(name, label=label))
 

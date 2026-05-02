@@ -6,7 +6,7 @@ from fastapi import APIRouter, Header, HTTPException
 from livekit import api
 from pydantic import BaseModel
 
-from podcast_commentary.agent.fox_config import _resolve_persona_names, load_config
+from podcast_commentary.agent.persona_config import _resolve_persona_names, load_config
 from podcast_commentary.api.livekit_dispatch import (
     DispatchMetadata,
     PersonaDescriptor,
@@ -14,6 +14,7 @@ from podcast_commentary.api.livekit_dispatch import (
 )
 from podcast_commentary.api.livekit_tokens import mint_agent_token
 from podcast_commentary.api.routes.personas import (
+    PERSONA_MANIFEST_SCHEMA_VERSION,
     PersonaManifestEntry,
     build_persona_manifest,
 )
@@ -62,6 +63,9 @@ class CreateSessionResponse(BaseModel):
     # ``GET /api/personas``. The extension re-renders avatar slots from
     # this so the stack always matches what the server actually minted.
     personas: list[PersonaManifestEntry]
+    # Pinned alongside the embedded list so the extension can reject a
+    # mismatched manifest shape without a separate ``/api/personas`` call.
+    personas_schema_version: int = PERSONA_MANIFEST_SCHEMA_VERSION
 
 
 def _persona_room_name(session_id: str, persona: str) -> str:
@@ -122,7 +126,7 @@ async def create_session_route(
         personas_meta.append(
             PersonaDescriptor(
                 name=name,
-                label=cfg.persona.speaker_label or name,
+                label=cfg.character.speaker_label or name,
                 avatar_url=cfg.avatar.avatar_url,
             )
         )
@@ -206,6 +210,7 @@ async def create_session_route(
         video_url=request.video_url,
         rooms=rooms,
         personas=build_persona_manifest(),
+        personas_schema_version=PERSONA_MANIFEST_SCHEMA_VERSION,
     )
 
 

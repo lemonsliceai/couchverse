@@ -18,7 +18,11 @@ import { EventDeduper } from "./livekit/event-deduper.js";
 import { RoomController } from "./livekit/room-controller.js";
 import { detectActiveMedia, syncPlayheadToAgent } from "./messaging/tab-bridge.js";
 import { personaFromAvatarIdentity, resolvePersonaKey } from "./persona.js";
-import { createSessionApi, friendlyApiError } from "./transport/api.js";
+import {
+  createSessionApi,
+  EXPECTED_PERSONA_MANIFEST_VERSION,
+  friendlyApiError,
+} from "./transport/api.js";
 import { captureAndPublishTabAudio, stopTabStream } from "./transport/tab-capture.js";
 import {
   hideError,
@@ -31,6 +35,7 @@ import {
 } from "./ui/avatar-slots.js";
 import { getPacing } from "./ui/pacing-controls.js";
 import { renderAvatarSlots } from "./ui/persona-renderer.js";
+import { getSelectionMode } from "./ui/selection-mode-control.js";
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -45,6 +50,12 @@ function parseSession(payload) {
   }
   if (typeof payload.livekit_url !== "string") {
     throw new Error("Session response missing livekit_url");
+  }
+  if (payload.personas_schema_version !== EXPECTED_PERSONA_MANIFEST_VERSION) {
+    throw new Error(
+      `Unsupported personas_schema_version: got ${payload.personas_schema_version}, ` +
+        `expected ${EXPECTED_PERSONA_MANIFEST_VERSION}. Update the extension.`,
+    );
   }
   if (!Array.isArray(payload.rooms) || payload.rooms.length === 0) {
     throw new Error("Session response missing rooms[]");
@@ -80,11 +91,17 @@ function parseSession(payload) {
     throw new Error("Session response missing personas[]");
   }
 
+  // Per-persona output trim is sourced from the manifest. Personas that
+  // don't ship a trim_gain default to 1.0 (the reference level for our
+  // ElevenLabs voices). Audio graph reads through `getTrimGain`.
+  const trimGains = new Map(payload.personas.map((p) => [p.name, p.trim_gain ?? 1.0]));
+
   return {
     sessionId: payload.session_id,
     livekitUrl: payload.livekit_url,
     rooms,
     personas: payload.personas,
+    trimGains,
   };
 }
 
@@ -316,6 +333,13 @@ export class SessionLifecycle {
     );
   }
 
+  publishSelectionMode(mode) {
+    this._sendPrimaryControl(
+      { type: "selection_mode", mode: mode ?? getSelectionMode() },
+      "podcast.control",
+    );
+  }
+
   // ── Internal helpers ──
 
   async _teardownPartialStart() {
@@ -480,7 +504,7 @@ export class SessionLifecycle {
         );
         return;
       }
-      this._audio.attachPersona(track, key);
+      this._audio.attachPersona(track, key, this._session?.trimGains.get(key));
       return;
     }
 
@@ -526,6 +550,7 @@ export class SessionLifecycle {
       console.log("[ext] Agent ready — syncing playhead");
       this._syncPlayhead();
       this.publishPacing();
+      this.publishSelectionMode();
       return;
     }
 

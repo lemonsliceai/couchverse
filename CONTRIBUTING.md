@@ -2,6 +2,9 @@
 
 Thanks for your interest in contributing — PRs are genuinely welcome.
 
+> [!IMPORTANT]
+> Couchverse is released under the [PolyForm Noncommercial License 1.0.0](LICENSE). LemonSlice also offers Couchverse under separate commercial terms. By submitting a contribution, you agree that LemonSlice may distribute your contribution under both the PolyForm Noncommercial License and any commercial license LemonSlice offers, and you represent that you have the right to grant that permission. If your employer has rights to your work, please make sure they are okay with this before contributing.
+
 ## Table of contents
 
 - [Development setup](#development-setup)
@@ -10,6 +13,7 @@ Thanks for your interest in contributing — PRs are genuinely welcome.
 - [Reporting bugs](#reporting-bugs)
 - [Security](#security)
 - [Code of conduct](#code-of-conduct)
+- [License of contributions](#license-of-contributions)
 
 ## Development setup
 
@@ -78,3 +82,14 @@ Open a [GitHub issue](https://github.com/lemonsliceai/couchverse/issues) with:
 ## Code of conduct
 
 This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). By participating, you agree to uphold it.
+
+## License of contributions
+
+Couchverse is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE) and is also offered by LemonSlice under separate commercial terms.
+
+By opening a pull request, you confirm that:
+
+1. You have the right to submit the contribution (it's your own work, or your employer has authorized it).
+2. You license your contribution to LemonSlice under the PolyForm Noncommercial License 1.0.0 **and** grant LemonSlice a perpetual, worldwide, royalty-free right to also distribute your contribution under any other license LemonSlice uses for the project, including commercial licenses.
+
+This dual-licensing arrangement is what lets LemonSlice offer paid commercial licenses without needing to track down every contributor for sign-off later. If you're not comfortable with that, please open an issue to discuss before submitting code.

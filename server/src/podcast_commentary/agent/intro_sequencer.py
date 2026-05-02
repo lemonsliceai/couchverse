@@ -37,7 +37,7 @@ from livekit import rtc
 
 from podcast_commentary.agent.comedian import PersonaAgent
 from podcast_commentary.agent.control_channel import ControlChannel
-from podcast_commentary.agent.fox_config import CONFIG
+from podcast_commentary.agent.persona_config import CONFIG
 from podcast_commentary.agent.playout_waiter import PlayoutWaiter
 from podcast_commentary.agent.room_state import RoomState
 

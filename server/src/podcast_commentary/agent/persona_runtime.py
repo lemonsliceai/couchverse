@@ -4,7 +4,7 @@ The agent ``entrypoint`` (see ``main.py``) parses dispatch metadata then
 needs to, for every persona:
 
   * resolve the right ``rtc.Room`` (primary or self-joined secondary)
-  * build an ``AgentSession`` from the persona's ``FoxConfig``
+  * build an ``AgentSession`` from the persona's ``PersonaConfig``
   * start the LemonSlice avatar under a unique participant identity
   * call ``session.start`` with the matching audio-output options
   * record the per-persona context the Director consumes
@@ -28,7 +28,7 @@ from livekit.agents import AgentSession, room_io
 from podcast_commentary.agent.comedian import PersonaAgent
 from podcast_commentary.agent.director import PersonaContext
 from podcast_commentary.agent.dispatch_metadata import DispatchMetadata
-from podcast_commentary.agent.fox_config import FoxConfig, load_config
+from podcast_commentary.agent.persona_config import PersonaConfig, load_config
 from podcast_commentary.agent.secondary_room import SecondaryRoomConnector
 
 logger = logging.getLogger("podcast-commentary.agent")
@@ -110,7 +110,7 @@ class PersonaRuntimeBuilder:
         primary_room: rtc.Room,
         connector_by_persona: dict[str, SecondaryRoomConnector],
         vad: Any,
-        build_session: Callable[[FoxConfig, Any], AgentSession],
+        build_session: Callable[[PersonaConfig, Any], AgentSession],
         start_avatar: StartAvatar,
         avatar_startup_ms: dict[str, float],
     ) -> None:
@@ -174,7 +174,7 @@ class PersonaRuntimeBuilder:
         logger.info(
             "[%s] === SYSTEM PROMPT ===\n%s\n=== END SYSTEM PROMPT ===",
             persona_name,
-            config.persona.system_prompt,
+            config.character.system_prompt,
         )
 
         session = self._build_session(config, self._vad)

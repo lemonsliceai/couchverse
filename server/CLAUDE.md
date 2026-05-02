@@ -39,15 +39,17 @@ src/podcast_commentary/
 │   ├── playout_waiter.py  # Bounded wait on SpeechHandle.wait_for_playout
 │   ├── room_state.py      # Shared mutable state: shutdown flag, last-turn clock, listening predicate
 │   ├── settings_controller.py # Frequency / length presets (chattiness, reply length)
+│   ├── selection_mode_controller.py # Speaker-pick mode toggle (Ordered / Shuffle / Director)
 │   ├── skip_coordinator.py # Skip-button → interrupt + commentary_end fan-out
 │   ├── task_supervisor.py # fire_and_forget tracking + bulk cancel
-│   ├── selector.py        # Picks which persona speaks next; consecutive-turn cap
+│   ├── selector.py        # SpeakerSelector facade + OrderedStrategy / ShuffleStrategy
+│   ├── director_strategy.py # LLM-judged speaker pick (lazy groq.LLM, fallback to ordered)
 │   ├── podcast_pipeline.py # Subscribes to podcast-audio track + Groq STT
 │   ├── speech_gate.py     # Gate logic for "is the agent currently speaking?"
 │   ├── prompts.py         # System prompts and context builders
 │   ├── angles.py          # Comedic angle definitions
 │   ├── metrics.py         # In-process counters (turn totals, RPC outcomes, gaps)
-│   └── fox_config.py      # Persona configs (voice, avatar URL, label)
+│   └── persona_config.py  # Persona configs (voice, avatar URL, label)
 └── core/          # Shared across api and agent
     ├── config.py  # Pydantic BaseSettings (loads .env)
     └── db.py      # asyncpg pool, migrations, CRUD
@@ -55,7 +57,7 @@ src/podcast_commentary/
 
 ## Agent phase state machine
 
-Each PersonaAgent uses a `FoxPhase` enum: INTRO → LISTENING → COMMENTATING. Illegal transitions log errors. Always respect the phase model when modifying agent behavior.
+Each PersonaAgent uses a `PersonaPhase` enum: INTRO → LISTENING → COMMENTATING. Illegal transitions log errors. Always respect the phase model when modifying agent behavior.
 
 ## Timing constants (commentary.py)
 
@@ -63,6 +65,10 @@ Each PersonaAgent uses a `FoxPhase` enum: INTRO → LISTENING → COMMENTATING. 
 - `BURST_WINDOW = 60s`, `BURST_MAX = 8` — max 8 comments per minute
 - `BURST_COOLDOWN = 8s` — forced pause after hitting burst limit
 - `POST_SPEECH_DELAY = 7s` — wait after podcast speech ends before evaluating timers
+
+## Persona manifest contract
+
+`GET /api/personas` and `POST /api/sessions` both expose a versioned persona manifest the extension consumes to render slots, route tracks, color highlights, and apply per-persona audio trim. Schema constant: `PERSONA_MANIFEST_SCHEMA_VERSION` in `api/routes/personas.py`. Bump it on any breaking field change — the extension validates the version and refuses unknown values. Adding a field with a default is non-breaking; removing or renaming a field is. Each persona's presentation lives in `agent/persona_configs/{name}.py` under `display=DisplayConfig(...)` (accent colors, trim gain). On startup, `validate_persona_lineup()` (lifespan) asserts every name in `PERSONAS` resolves to a config file with valid hex colors and logs the resolved lineup.
 
 ## Gotchas
 

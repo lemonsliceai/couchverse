@@ -8,6 +8,13 @@ import { API_URL } from "../config.js";
 
 const ANONYMOUS_ID_KEY = "couchverse.anonymous_id";
 
+// Bumped in lockstep with the server's persona-manifest envelope. The
+// server stamps both the GET /api/personas response and the personas[]
+// block of POST /api/sessions with this version; mismatches mean the
+// client and server have drifted and we'd rather fail fast at the API
+// edge than render a half-broken cast.
+export const EXPECTED_PERSONA_MANIFEST_VERSION = 1;
+
 // Stable per-install id, persisted in chrome.storage.local. Sent on
 // every session creation so the server can later associate pre-auth
 // sessions with a Clerk user (UPDATE ... WHERE anonymous_id = $1).
@@ -56,7 +63,14 @@ export async function fetchPersonasApi() {
     err.status = res.status;
     throw err;
   }
-  return res.json();
+  const body = await res.json();
+  if (body?.schema_version !== EXPECTED_PERSONA_MANIFEST_VERSION) {
+    throw new Error(
+      `Unsupported persona manifest version: got ${body?.schema_version}, ` +
+        `expected ${EXPECTED_PERSONA_MANIFEST_VERSION}. Update the extension.`,
+    );
+  }
+  return body.personas;
 }
 
 // Translate raw fetch / API errors into something safe to display in the

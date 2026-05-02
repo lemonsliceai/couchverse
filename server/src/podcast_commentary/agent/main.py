@@ -7,7 +7,7 @@ orchestration). Here we only:
   * parse the dispatch metadata (which personas + per-persona avatar
     URLs + secondary-room JWTs)
   * for each persona, build an ``AgentSession`` (STT / LLM / TTS / VAD /
-    turn detection from the persona's own ``FoxConfig``)
+    turn detection from the persona's own ``PersonaConfig``)
   * start the LemonSlice avatar with a *unique* participant identity per
     persona, in its own ``rtc.Room`` so the second-avatar RPC drops are
     avoided
@@ -39,7 +39,7 @@ from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from podcast_commentary.agent.director import Director
 from podcast_commentary.agent.dispatch_metadata import DispatchMetadata
-from podcast_commentary.agent.fox_config import FoxConfig
+from podcast_commentary.agent.persona_config import PersonaConfig
 from podcast_commentary.agent.metrics import (
     avatar_startup_seconds,
     avatar_startup_total,
@@ -88,8 +88,8 @@ def prewarm(proc: JobProcess) -> None:
 server.setup_fnc = prewarm
 
 
-def _build_session(config: FoxConfig, vad: Any) -> AgentSession:
-    """Build one AgentSession from a persona's FoxConfig.
+def _build_session(config: PersonaConfig, vad: Any) -> AgentSession:
+    """Build one AgentSession from a persona's PersonaConfig.
 
     Notes:
       * ``preemptive_generation=False`` — we control exactly when each
@@ -128,7 +128,7 @@ def _build_session(config: FoxConfig, vad: Any) -> AgentSession:
 
 async def _start_avatar(
     *,
-    config: FoxConfig,
+    config: PersonaConfig,
     avatar_url: str | None,
     session: AgentSession,
     room: rtc.Room,

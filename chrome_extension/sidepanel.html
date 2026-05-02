@@ -52,7 +52,7 @@
       <div id="controls">
         <details id="pacing-disclosure">
           <summary>
-            <span class="disclosure-label">Pacing</span>
+            <span class="disclosure-label">Options</span>
             <span class="disclosure-chevron" aria-hidden="true">⌄</span>
           </summary>
 
@@ -78,6 +78,18 @@
                 <button type="button" class="seg-btn" data-value="short">Short</button>
                 <button type="button" class="seg-btn is-active" data-value="normal">Normal</button>
                 <button type="button" class="seg-btn" data-value="long">Long</button>
+              </div>
+            </div>
+
+            <div class="control-group" role="group" aria-label="Speaker pick">
+              <div class="control-label">
+                <span class="control-title">Speaker pick</span>
+                <span class="control-hint">how the next speaker is chosen</span>
+              </div>
+              <div class="segmented" data-setting="selection_mode">
+                <button type="button" class="seg-btn is-active" data-value="ordered">Ordered</button>
+                <button type="button" class="seg-btn" data-value="shuffle">Shuffle</button>
+                <button type="button" class="seg-btn" data-value="director">Director</button>
               </div>
             </div>
           </div>

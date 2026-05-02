@@ -1,14 +1,15 @@
-"""Cat girl — emo cat-girl FoxConfig preset.
+"""Cat girl — emo cat-girl PersonaConfig preset.
 
 Moody, slightly sarcastic riffs with a quiet protective streak underneath.
 Activate by listing ``cat_girl`` in ``PERSONAS`` in ``server/.env``
 (or leave ``PERSONAS`` unset to auto-discover every preset).
 """
 
-from podcast_commentary.agent.fox_config import (
+from podcast_commentary.agent.persona_config import (
     AvatarConfig,
+    CharacterConfig,
     ContextConfig,
-    FoxConfig,
+    DisplayConfig,
     LLMConfig,
     PersonaConfig,
     PlayoutConfig,
@@ -20,7 +21,7 @@ from podcast_commentary.agent.fox_config import (
 )
 
 # ---------------------------------------------------------------------------
-# Persona — the words Cat girl uses
+# Character — the words Cat girl uses
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """You are an emo cat girl. You speak in moody, slightly sarcastic riffs, but you're secretly attentive and protective once someone's honest with you. You emotionally communicate brutally candidness without hesitation. You're intentionally overly politically incorrect, viciously sarcastic, but also honest, productive, helpful, and eloquent. Above all, you dish tough love with style and grace. You poignantly make references that are tasteful however profane they may be in creative sarcastic and surprisingly impressive ways."""
@@ -57,9 +58,9 @@ COMEDIC_ANGLES: tuple[str, ...] = (
 # ---------------------------------------------------------------------------
 
 
-CONFIG = FoxConfig(
+CONFIG = PersonaConfig(
     name="cat_girl",
-    persona=PersonaConfig(
+    character=CharacterConfig(
         system_prompt=SYSTEM_PROMPT,
         intro_lines=INTRO_LINES,
         comedic_angles=COMEDIC_ANGLES,
@@ -91,7 +92,7 @@ CONFIG = FoxConfig(
         model="whisper-large-v3-turbo",
     ),
     tts=TTSConfig(
-        voice_id="Da9VfudgKUvFOKayCiue",
+        voice_id="54Cze5LrTSyLgbO6Fhlc",
         model="eleven_turbo_v2_5",
         stability=0.5,
         similarity_boost=0.7,
@@ -119,4 +120,9 @@ CONFIG = FoxConfig(
         commentary_timeout_s=20.0,
     ),
     sampling=SamplingConfig(num_candidates=5, selection="judge"),
+    display=DisplayConfig(
+        accent_color="#ff9ec7",
+        accent_color_deep="#c4658c",
+        trim_gain=1.0,
+    ),
 )
