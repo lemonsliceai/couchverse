@@ -33,9 +33,12 @@ export function mountAvatarVideo(slot, track, roomName = null) {
   if (roomName && existingRoom && existingRoom !== roomName) {
     console.warn(
       "[ext] avatar slot already owned by a different room — unexpected, expected one persona per room",
-      "persona=", slot.dataset.name,
-      "existingRoom=", existingRoom,
-      "incomingRoom=", roomName,
+      "persona=",
+      slot.dataset.name,
+      "existingRoom=",
+      existingRoom,
+      "incomingRoom=",
+      roomName,
     );
   }
   const el = track.attach();

@@ -17,8 +17,8 @@ import { SessionLifecycle } from "./session.js";
 import { fetchPersonasApi, friendlyApiError } from "./transport/api.js";
 import { showError } from "./ui/avatar-slots.js";
 import { initPacingControls } from "./ui/pacing-controls.js";
-import { initSelectionModeControl } from "./ui/selection-mode-control.js";
 import { renderSetupSlots } from "./ui/persona-renderer.js";
+import { initSelectionModeControl } from "./ui/selection-mode-control.js";
 
 const $ = (sel) => document.querySelector(sel);
 

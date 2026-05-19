@@ -74,9 +74,12 @@ export class RoomController {
     await this._room.connect(livekitUrl, this._token);
     console.log(
       "[ext] Connected to LiveKit room",
-      "name=", this._roomName,
-      "role=", this._role,
-      "persona=", this._persona,
+      "name=",
+      this._roomName,
+      "role=",
+      this._role,
+      "persona=",
+      this._persona,
     );
   }
 

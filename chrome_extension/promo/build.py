@@ -1,7 +1,7 @@
 """Compose Chrome Web Store promo tiles for Couchverse.
 
 Reuses the website's neo-brutalist design language: yolk/cream backgrounds,
-thick ink borders, hard offset shadows, fox & alien character art.
+thick ink borders, hard offset shadows, alien & cat girl character art.
 
 Run:  python3 chrome_extension/promo/build.py
 """
@@ -28,7 +28,7 @@ HERE = Path(__file__).resolve().parent
 ICONS = HERE.parent / "icons"
 
 BRICOLAGE = str(HERE / "Bricolage-ExtraBold.ttf")
-FOX_PORTRAIT = ICONS / "fox_2x3.jpg"
+CAT_GIRL_PORTRAIT = ICONS / "cat_girl_2x3.png"
 ALIEN_PORTRAIT = ICONS / "alien_2x3.jpg"
 OUT = HERE
 
@@ -304,11 +304,11 @@ def make_small():
     pair_cx_right = pair_cx_left + avatar_r * 2 + 12
     avatar_cy = H - M - avatar_r
 
-    fox_face = crop_face(FOX_PORTRAIT, 240, focus_y_frac=0.28)
     alien_face = crop_face(ALIEN_PORTRAIT, 240, focus_y_frac=0.30)
-    paste_circle(img, fox_face, cx=pair_cx_left, cy=avatar_cy,
+    cat_girl_face = crop_face(CAT_GIRL_PORTRAIT, 240, focus_y_frac=0.28)
+    paste_circle(img, alien_face, cx=pair_cx_left, cy=avatar_cy,
                  radius=avatar_r, border_width=3)
-    paste_circle(img, alien_face, cx=pair_cx_right, cy=avatar_cy,
+    paste_circle(img, cat_girl_face, cx=pair_cx_right, cy=avatar_cy,
                  radius=avatar_r, border_width=3)
 
     # Wordmark stack to the right of avatars
@@ -368,7 +368,7 @@ def make_marquee():
     sub_y = line2_y + 124
     draw.text(
         (LX, sub_y),
-        "Fox & Alien — live AI hecklers in your Chrome tab.",
+        "Alien & Cat girl — live AI hecklers in your Chrome tab.",
         fill=INK_SOFT, font=sub_font,
     )
 
@@ -379,29 +379,29 @@ def make_marquee():
          bg=FOX, fg=PAPER, pad=(26, 16), shadow=(8, 8))
 
     # ===== RIGHT HALF: characters + speech bubble + stickers =====
-    fox_img = Image.open(FOX_PORTRAIT).convert("RGB")
     alien_img = Image.open(ALIEN_PORTRAIT).convert("RGB")
+    cat_girl_img = Image.open(CAT_GIRL_PORTRAIT).convert("RGB")
 
     # Cards live entirely inside the 76px right margin and 64px bottom margin
     # (with rotation/shadow overhead accounted for).
     card_w, card_h = 220, 320
     cards_cy = 300
-    fox_cx = 935
-    alien_cx = 1155
-    paste_rotated_card(
-        img, fox_img,
-        center=(fox_cx, cards_cy), size=(card_w, card_h),
-        angle_deg=-4, radius=22, border_width=5,
-        shadow_offset=(8, 8), label="FOX", label_bg=FOX,
-    )
+    alien_cx = 935
+    cat_girl_cx = 1155
     paste_rotated_card(
         img, alien_img,
         center=(alien_cx, cards_cy), size=(card_w, card_h),
-        angle_deg=4, radius=22, border_width=5,
+        angle_deg=-4, radius=22, border_width=5,
         shadow_offset=(8, 8), label="ALIEN", label_bg=ALIEN,
     )
+    paste_rotated_card(
+        img, cat_girl_img,
+        center=(cat_girl_cx, cards_cy), size=(card_w, card_h),
+        angle_deg=4, radius=22, border_width=5,
+        shadow_offset=(8, 8), label="CAT GIRL", label_bg=CHEEK,
+    )
 
-    # Speech bubble — sits above the fox card; the bubble itself is the "hot take",
+    # Speech bubble — sits above the left card; the bubble itself is the "hot take",
     # so no separate HOT TAKE sticker (which would clutter and overlap the text).
     bubble_font = font(BRICOLAGE, 22)
     speech_bubble(
@@ -412,7 +412,7 @@ def make_marquee():
         shadow=(6, 6),
     )
 
-    # Single accent sticker, anchored to the alien card
+    # Single accent sticker, anchored to the right card
     stk_font = font(BRICOLAGE, 18)
     sticker(img, (1235, 475), "UNHINGED", stk_font, bg=ALIEN, angle_deg=6)
 

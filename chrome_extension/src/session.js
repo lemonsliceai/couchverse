@@ -19,8 +19,8 @@ import { RoomController } from "./livekit/room-controller.js";
 import { detectActiveMedia, syncPlayheadToAgent } from "./messaging/tab-bridge.js";
 import { personaFromAvatarIdentity, resolvePersonaKey } from "./persona.js";
 import {
-  createSessionApi,
   EXPECTED_PERSONA_MANIFEST_VERSION,
+  createSessionApi,
   friendlyApiError,
 } from "./transport/api.js";
 import { captureAndPublishTabAudio, stopTabStream } from "./transport/tab-capture.js";
@@ -236,9 +236,7 @@ export class SessionLifecycle {
       // rejects and the catch below tears down whatever already
       // succeeded. Connection ordering doesn't matter, so don't
       // serialize.
-      await Promise.all(
-        [...this._controllers.values()].map((c) => c.connect(payload.livekit_url)),
-      );
+      await Promise.all([...this._controllers.values()].map((c) => c.connect(payload.livekit_url)));
 
       // Tab audio publishes exactly once, to the primary room only.
       // Secondary rooms must not see this uplink — duplicating it would
@@ -588,7 +586,6 @@ export class SessionLifecycle {
       this._updateSkipButton();
       return;
     }
-
   }
 
   // VAD-driven active-speaker updates highlight the matching slot only
@@ -628,22 +625,32 @@ export class SessionLifecycle {
     if (reason === DisconnectReason.CLIENT_INITIATED) {
       console.log(
         "[ext] Room disconnected (client-initiated):",
-        "name=", roomName, "role=", role, "persona=", persona,
+        "name=",
+        roomName,
+        "role=",
+        role,
+        "persona=",
+        persona,
       );
       return;
     }
     console.warn(
       "[ext] Room disconnected mid-session — ending session:",
-      "name=", roomName, "role=", role, "persona=", persona, "reason=", reason,
+      "name=",
+      roomName,
+      "role=",
+      role,
+      "persona=",
+      persona,
+      "reason=",
+      reason,
     );
     // First disconnect wins. Subsequent calls (e.g. the second room
     // dropping moments later) hit the state guard inside `end()` and
     // become no-ops.
     if (this._state !== SessionState.LIVE) return;
     showError("Connection lost — please restart");
-    this.end().catch((err) =>
-      console.warn("[ext] auto-end on room disconnect failed:", err),
-    );
+    this.end().catch((err) => console.warn("[ext] auto-end on room disconnect failed:", err));
   }
 
   _onParticipantConnected(participant) {
@@ -708,8 +715,6 @@ export class SessionLifecycle {
   // surfaces an error on the setup screen the user lands back on.
   _failSafePrimaryLost() {
     showError("Lost connection to commentary — please restart");
-    this.end().catch((err) =>
-      console.warn("[ext] auto-end on lost primary failed:", err),
-    );
+    this.end().catch((err) => console.warn("[ext] auto-end on lost primary failed:", err));
   }
 }
